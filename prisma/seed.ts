@@ -77,7 +77,12 @@ async function main() {
     catByName[c.nombre] = cat.id;
     for (const s of c.subs) {
       await prisma.subcategoria.upsert({
-        where: { nombre: s },
+        where: {
+          categoriaId_nombre: {
+            categoriaId: cat.id,
+            nombre: s,
+          },
+        },
         update: { categoriaId: cat.id },
         create: { nombre: s, categoriaId: cat.id },
       });
@@ -85,13 +90,28 @@ async function main() {
   }
 
   const subBar = await prisma.subcategoria.findUnique({
-    where: { nombre: 'Bar de tapas' },
+    where: {
+      categoriaId_nombre: {
+        categoriaId: catByName['Restauración'],
+        nombre: 'Bar de tapas',
+      },
+    },
   });
   const subCafe = await prisma.subcategoria.findUnique({
-    where: { nombre: 'Cafetería' },
+    where: {
+      categoriaId_nombre: {
+        categoriaId: catByName['Restauración'],
+        nombre: 'Cafetería',
+      },
+    },
   });
   const subRep = await prisma.subcategoria.findUnique({
-    where: { nombre: 'Reparación de móviles' },
+    where: {
+      categoriaId_nombre: {
+        categoriaId: catByName['Tecnología'],
+        nombre: 'Reparación de móviles',
+      },
+    },
   });
 
   // ----- Negocios (helper por nombre, porque nombre NO es unique) -----

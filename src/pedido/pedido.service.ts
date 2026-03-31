@@ -88,7 +88,12 @@ export class PedidoService {
       if (exists) {
         return tx.pedidoProducto.update({
           where,
-          data: { cantidad: exists.cantidad + dto.cantidad },
+          data: {
+            cantidad: exists.cantidad + dto.cantidad,
+            subtotal: new Prisma.Decimal(exists.cantidad + dto.cantidad).mul(
+              exists.precioUnitario,
+            ),
+          },
         });
       }
       return tx.pedidoProducto.create({
@@ -97,6 +102,7 @@ export class PedidoService {
           productoId: dto.productoId,
           cantidad: dto.cantidad,
           precioUnitario: prod.precio,
+          subtotal: new Prisma.Decimal(dto.cantidad).mul(prod.precio),
         },
       });
     });
@@ -108,10 +114,16 @@ export class PedidoService {
     dto: UpdateItemDto,
   ) {
     const where = { pedidoId_productoId: { pedidoId, productoId } as any };
+    const line = await this.prisma.pedidoProducto.findUnique({ where });
+    if (!line) throw new NotFoundException('Línea de pedido no encontrada');
+
     try {
       return await this.prisma.pedidoProducto.update({
         where,
-        data: { cantidad: dto.cantidad },
+        data: {
+          cantidad: dto.cantidad,
+          subtotal: new Prisma.Decimal(dto.cantidad).mul(line.precioUnitario),
+        },
       });
     } catch {
       throw new NotFoundException('Línea de pedido no encontrada');
@@ -134,7 +146,11 @@ export class PedidoService {
     const lines = await this.prisma.pedidoProducto.findMany({
       where: { pedidoId },
     });
-    return lines.reduce((acc, l) => acc + l.cantidad * l.precioUnitario, 0);
+    return lines.reduce(
+      (acc, l) =>
+        acc.add(new Prisma.Decimal(l.cantidad).mul(l.precioUnitario)),
+      new Prisma.Decimal(0),
+    );
   }
 
   async createCompra(
@@ -152,7 +168,7 @@ export class PedidoService {
       throw new BadRequestException('Pedido no disponible para compra');
 
     const total = await this.calcTotalPedido(pedidoId);
-    if (total <= 0) throw new BadRequestException('Pedido vacío');
+    if (total.lte(0)) throw new BadRequestException('Pedido vacío');
 
     // una compra por usuario-pedido; si quisieras split múltiple, haz otra tabla puente
     try {
@@ -227,10 +243,16 @@ export class PedidoService {
     const pagos = await tx.pago.findMany({
       where: { compraId, estado: PagoEstado.PAGADO },
     });
-    const pagado = pagos.reduce((a, p) => a + p.cantidad, 0);
+    const pagado = pagos.reduce(
+      (acc, pago) => acc.add(pago.cantidad),
+      new Prisma.Decimal(0),
+    );
     if (!compra) return;
 
-    if (pagado >= compra.total && compra.estado !== CompraEstado.COMPLETADA) {
+    if (
+      pagado.greaterThanOrEqualTo(compra.total) &&
+      compra.estado !== CompraEstado.COMPLETADA
+    ) {
       await tx.compra.update({
         where: { id: compraId },
         data: { estado: CompraEstado.COMPLETADA },
