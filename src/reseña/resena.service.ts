@@ -1,9 +1,11 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { MotivoTx, PostTipo } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateResenaDto } from './dto/create-resena.dto';
 import { UpdateResenaDto } from './dto/update-resena.dto';
@@ -73,6 +75,17 @@ export class ResenaService {
   /** Crear reseña + post + pagar pétalos (+5 autor, +5 dueño si distinto) */
   async crear(userId: number, dto: CreateResenaDto) {
     return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.resena.findFirst({
+        where: {
+          usuarioId: userId,
+          negocioId: dto.negocioId,
+        },
+        select: { id: true },
+      });
+      if (existing) {
+        throw new ConflictException('Ya existe una reseña tuya para este negocio');
+      }
+
       // crear reseña
       const resena = await tx.resena.create({
         data: {
@@ -88,6 +101,7 @@ export class ResenaService {
       await tx.post.create({
         data: {
           usuarioId: userId,
+          tipo: PostTipo.RESENA,
           negocioId: dto.negocioId,
           resenaId: resena.id,
         },
@@ -98,7 +112,7 @@ export class ResenaService {
         data: {
           usuarioId: userId,
           delta: 5,
-          motivo: 'resena_autor',
+          motivo: MotivoTx.RESENA_AUTOR,
           refTipo: 'Resena',
           refId: resena.id,
         },
@@ -118,7 +132,7 @@ export class ResenaService {
           data: {
             usuarioId: dueno.duenoId,
             delta: 5,
-            motivo: 'resena_negocio',
+            motivo: MotivoTx.RESENA_NEGOCIO,
             refTipo: 'Resena',
             refId: resena.id,
           },

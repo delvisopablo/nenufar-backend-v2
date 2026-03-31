@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 type Horario = {
@@ -124,9 +125,24 @@ export class ReservaService {
     const ok = avail.slots.includes(fecha.toISOString());
     if (!ok) throw new BadRequestException('Slot no disponible');
 
-    return this.prisma.reserva.create({
-      data: { negocioId, usuarioId: userId, fecha, nota: nota?.trim() || null },
-    });
+    try {
+      return await this.prisma.reserva.create({
+        data: {
+          negocioId,
+          usuarioId: userId,
+          fecha,
+          nota: nota?.trim() || null,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new BadRequestException('Slot no disponible');
+      }
+      throw error;
+    }
   }
 
   async getById(id: number) {

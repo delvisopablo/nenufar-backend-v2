@@ -5,6 +5,8 @@ import {
   IsNumber,
   IsInt,
   IsArray,
+  Max,
+  Min,
 } from 'class-validator';
 
 export class UpdatePromocionDto {
@@ -22,6 +24,8 @@ export class UpdatePromocionDto {
 
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   descuento?: number;
 
   @IsOptional()

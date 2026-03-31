@@ -7,8 +7,11 @@ import {
   CompraEstado,
   PagoEstado,
   MetodoPago,
+  LikeTipo,
   LogroTipo,
   Dificultad,
+  PostTipo,
+  RolNegocio,
 } from '@prisma/client';
 const prisma = new PrismaClient();
 
@@ -122,6 +125,23 @@ async function main() {
     },
   });
 
+  for (const negocio of [bar, cafe]) {
+    await prisma.negocioMiembro.upsert({
+      where: {
+        negocioId_usuarioId: {
+          negocioId: negocio.id,
+          usuarioId: pablo.id,
+        },
+      },
+      update: { rol: RolNegocio.DUENO },
+      create: {
+        negocioId: negocio.id,
+        usuarioId: pablo.id,
+        rol: RolNegocio.DUENO,
+      },
+    });
+  }
+
   // ----- Productos (idempotente por (negocioId, nombre) a nuestra manera) -----
   async function ensureProducto(negocioId, nombre, precio, descripcion) {
     const existing = await prisma.producto.findFirst({
@@ -166,7 +186,14 @@ async function main() {
       const r = await tx.resena.create({
         data: { usuarioId, negocioId, contenido, puntuacion },
       });
-      await tx.post.create({ data: { usuarioId, negocioId, resenaId: r.id } });
+      await tx.post.create({
+        data: {
+          usuarioId,
+          tipo: PostTipo.RESENA,
+          negocioId,
+          resenaId: r.id,
+        },
+      });
       return r;
     });
   }
@@ -192,10 +219,14 @@ async function main() {
       })
       .catch(() => {});
     await prisma.like
-      .create({ data: { postId: p.id, usuarioId: pedro.id, tipo: 'like' } })
+      .create({
+        data: { postId: p.id, usuarioId: pedro.id, tipo: LikeTipo.LIKE },
+      })
       .catch(() => {});
     await prisma.like
-      .create({ data: { postId: p.id, usuarioId: maria.id, tipo: 'like' } })
+      .create({
+        data: { postId: p.id, usuarioId: maria.id, tipo: LikeTipo.LIKE },
+      })
       .catch(() => {});
   }
 
@@ -240,6 +271,7 @@ async function main() {
   //     data: {
   //       pedidoId: pedido.id,
   //       usuarioId: maria.id,
+  //       negocioId: bar.id,
   //       total,
   //       estado: CompraEstado.PENDIENTE,
   //     },
@@ -247,6 +279,7 @@ async function main() {
   //   await prisma.pago.create({
   //     data: {
   //       compraId: compra.id,
+  //       usuarioId: maria.id,
   //       metodoPago: MetodoPago.TARJETA,
   //       estado: PagoEstado.PAGADO,
   //       cantidad: total,

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { MotivoTx } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 function toPaging(page?: number | string, limit?: number | string) {
@@ -43,7 +44,7 @@ export class PetalosService {
   async ajustarAdmin(
     usuarioId: number,
     delta: number,
-    motivo = 'ajuste_admin',
+    motivo: MotivoTx = MotivoTx.OTRO,
     refTipo?: string,
     refId?: number,
   ) {

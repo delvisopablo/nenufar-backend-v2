@@ -35,6 +35,17 @@ enum MetodoPago {
   OTRO
 }
 
+/// Reserva para futuras reacciones. Hoy solo existe LIKE.
+enum LikeTipo {
+  LIKE
+}
+
+enum PostTipo {
+  RESENA
+  PROMOCION
+  LOGRO
+}
+
 enum LogroTipo {
   COMPRA
   RESENA
@@ -50,58 +61,160 @@ enum Dificultad {
   LEGENDARIA
 }
 
+enum MotivoTx {
+  RESENA_AUTOR
+  RESENA_NEGOCIO
+  LIKE
+  LOGRO
+  RESERVA
+  OTRO
+}
+
+enum RolNegocio {
+  DUENO
+  EMPLEADO
+}
+
+enum ContenidoEstado {
+  BORRADOR
+  PUBLICADO
+  OCULTO
+  REPORTADO
+  ELIMINADO
+}
+
+enum TipoDescuento {
+  PORCENTAJE
+  IMPORTE_FIJO
+  PACK
+  DOS_X_UNO
+}
+
+enum ReservaEstado {
+  PENDIENTE
+  CONFIRMADA
+  CANCELADA
+  COMPLETADA
+  NO_SHOW
+}
+
+enum EstadoCuenta {
+  ACTIVA
+  PENDIENTE_VERIFICACION
+  SUSPENDIDA
+  BLOQUEADA
+  ELIMINADA
+}
+
+enum RolGlobal {
+  USUARIO
+  MODERADOR
+  ADMIN
+}
+
 // ---------- Modelos ----------
 model Usuario {
-  id        Int      @id @default(autoincrement())
-  nombre    String
-  nickname  String   @unique
-  email     String   @unique
-  password  String
-  foto      String?
-  creadoEn  DateTime @default(now())
-  biografia String?
+  id             Int          @id @default(autoincrement())
+  nombre         String
+  nickname       String       @unique
+  email          String       @unique
+  password       String
+  foto           String?
+  creadoEn       DateTime     @default(now())
+  actualizadoEn  DateTime     @updatedAt
+  eliminadoEn    DateTime?
+  biografia      String?
+  emailVerificado Boolean     @default(false)
+  verificadoEn   DateTime?
+  ultimoLoginEn  DateTime?
+  estadoCuenta   EstadoCuenta @default(ACTIVA)
+  rolGlobal      RolGlobal    @default(USUARIO)
 
   // Economía (simple)
   petalosSaldo Int        @default(0)
   petalosTx    PetaloTx[]
 
   // Relaciones
-  negocios      Negocio[]      @relation("DuenoNegocio")
-  resenas       Resena[]
-  reservas      Reserva[]
-  compras       Compra[]
-  comentarios   Comentario[]
-  posts         Post[]
-  logrosUsuario LogroUsuario[]
-  likes         Like[] // <— renombrado (antes Like[])
+  negocios        Negocio[]           @relation("DuenoNegocio")
+  resenas         Resena[]
+  reservas        Reserva[]
+  compras         Compra[]
+  pagos           Pago[]
+  comentarios     Comentario[]
+  posts           Post[]
+  logrosUsuario   LogroUsuario[]
+  likes           Like[]
+  negocioMiembros NegocioMiembro[]
+  siguiendo       UsuarioSeguimiento[] @relation("UsuarioSeguidor")
+  seguidores      UsuarioSeguimiento[] @relation("UsuarioSeguido")
+
+  @@index([estadoCuenta])
+  @@index([rolGlobal])
+  @@index([creadoEn])
 }
 
 model Categoria {
-  id            Int            @id @default(autoincrement())
-  nombre        String         @unique
+  id           Int      @id @default(autoincrement())
+  nombre       String   @unique
+  activo       Boolean  @default(true)
+  creadoEn     DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+  eliminadoEn  DateTime?
+
   negocios      Negocio[]
   subcategorias Subcategoria[]
   Logro         Logro[]
+
+  @@index([activo])
 }
 
 model Subcategoria {
-  id          Int       @id @default(autoincrement())
-  nombre      String    @unique
-  categoriaId Int
-  categoria   Categoria @relation(fields: [categoriaId], references: [id])
-  negocios    Negocio[]
-  Logro       Logro[]
+  id            Int       @id @default(autoincrement())
+  nombre        String
+  categoriaId   Int
+  activo        Boolean   @default(true)
+  creadoEn      DateTime  @default(now())
+  actualizadoEn DateTime  @updatedAt
+  eliminadoEn   DateTime?
+
+  categoria Categoria @relation(fields: [categoriaId], references: [id])
+  negocios  Negocio[]
+  Logro     Logro[]
+
+  @@unique([categoriaId, nombre])
+  @@index([categoriaId])
+  @@index([nombre])
+  @@index([activo])
 }
 
 model Negocio {
   id               Int      @id @default(autoincrement())
   nombre           String
   historia         String?
+  descripcionCorta String?
   fechaFundacion   DateTime
   direccion        String?
+  ciudad           String?
+  codigoPostal     String?
+  provincia        String?
+  latitud          Decimal? @db.Decimal(9, 6)
+  longitud         Decimal? @db.Decimal(9, 6)
   categoriaId      Int
   duenoId          Int
+  fotoPerfil       String?
+  fotoPortada      String?
+  telefono         String?
+  emailContacto    String?
+  web              String?
+  instagram        String?
+  verificado       Boolean  @default(false)
+  activo           Boolean  @default(true)
   creadoEn         DateTime @default(now())
+  actualizadoEn    DateTime @updatedAt
+  eliminadoEn      DateTime?
+
+  /// MVP: se mantiene en JSON para horario semanal y excepciones.
+  /// TODO: si crecen las consultas/validaciones, normalizar a tablas HorarioNegocio/HorarioExcepcion.
   horario          Json?
   intervaloReserva Int?
 
@@ -118,96 +231,146 @@ model Negocio {
   reservas    Reserva[]
   logros      Logro[]
   posts       Post[]
-  pedidos     Pedido[] // <— renombrado (antes Pedido[])
-  // ❌ compras: eliminado (no hay FK Negocio ← Compra)
+  pedidos     Pedido[]
+  compras     Compra[]
+  miembros    NegocioMiembro[]
 
   @@index([categoriaId])
   @@index([subcategoriaId])
   @@index([duenoId])
+  @@index([ciudad])
+  @@index([activo])
+  @@index([verificado])
+  // TODO: para búsqueda geográfica real conviene un índice geoespacial manual en PostgreSQL/PostGIS.
 }
 
 model Producto {
-  id          Int     @id @default(autoincrement())
-  nombre      String
-  descripcion String?
-  precio      Float
-  negocioId   Int
+  id            Int      @id @default(autoincrement())
+  nombre        String
+  descripcion   String?
+  /// TODO: validar en backend/SQL manual que precio >= 0.
+  precio        Decimal  @db.Decimal(10, 2)
+  activo        Boolean  @default(true)
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+  eliminadoEn   DateTime?
+  negocioId     Int
 
   negocio            Negocio     @relation(fields: [negocioId], references: [id])
   promocionPrincipal Promocion[] @relation("ProductoPrincipal")
   promociones        Promocion[] @relation("PromocionPack")
 
   pedidoProductos PedidoProducto[]
-  // ❌ Post[] eliminado (Post v2 no referencia producto)
   Logro           Logro[]
 
   @@index([negocioId])
+  @@index([activo])
 }
 
 model Post {
-  id        Int      @id @default(autoincrement())
-  usuarioId Int
-  negocioId Int?
-  creadoEn  DateTime @default(now())
+  id               Int             @id @default(autoincrement())
+  usuarioId        Int
+  tipo             PostTipo
+  estado           ContenidoEstado @default(PUBLICADO)
+  negocioId        Int?
+  creadoEn         DateTime        @default(now())
+  actualizadoEn    DateTime        @updatedAt
+  moderadoEn       DateTime?
+  motivoModeracion String?
+  eliminadoEn      DateTime?
 
-  // one-of
+  /// Exactly one target must be present according to `tipo`.
+  /// TODO: reforzar con CHECK SQL manual o validación de backend que exista exactamente una FK objetivo.
   resenaId    Int?
   promocionId Int?
   logroId     Int?
 
   usuario   Usuario    @relation(fields: [usuarioId], references: [id])
   negocio   Negocio?   @relation(fields: [negocioId], references: [id])
-  resena    Resena?    @relation(fields: [resenaId], references: [id])
-  promocion Promocion? @relation(fields: [promocionId], references: [id])
-  logro     Logro?     @relation(fields: [logroId], references: [id])
+  resena    Resena?    @relation(fields: [resenaId], references: [id], onDelete: Cascade)
+  promocion Promocion? @relation(fields: [promocionId], references: [id], onDelete: Cascade)
+  logro     Logro?     @relation(fields: [logroId], references: [id], onDelete: Cascade)
 
   comentarios Comentario[]
   likes       Like[]
 
   @@index([creadoEn])
+  @@index([tipo, creadoEn])
   @@index([usuarioId])
   @@index([negocioId])
   @@index([resenaId])
   @@index([promocionId])
   @@index([logroId])
+  @@index([estado])
 }
 
 model Resena {
-  id           Int      @id @default(autoincrement())
-  contenido    String
-  puntuacion   Int
-  selloNenufar Boolean  @default(false)
-  usuarioId    Int
-  negocioId    Int
-  creadoEn     DateTime @default(now())
+  id               Int             @id @default(autoincrement())
+  contenido        String
+  /// TODO: validar en backend o CHECK SQL manual que puntuacion esté entre 1 y 5.
+  puntuacion       Int
+  estado           ContenidoEstado @default(PUBLICADO)
+  moderadoEn       DateTime?
+  motivoModeracion String?
+  selloNenufar     Boolean         @default(false)
+  usuarioId        Int
+  negocioId        Int
+  creadoEn         DateTime        @default(now())
+  actualizadoEn    DateTime        @updatedAt
+  eliminadoEn      DateTime?
 
   negocio Negocio @relation(fields: [negocioId], references: [id])
   usuario Usuario @relation(fields: [usuarioId], references: [id])
   Post    Post[]
 
-  @@index([negocioId])
+  @@index([negocioId, creadoEn])
   @@index([usuarioId])
   @@index([creadoEn])
+  @@index([estado])
+  // TODO: no se impone @@unique([usuarioId, negocioId]) para permitir histórico de reseñas.
+  // Si se quiere una sola reseña activa por usuario y negocio, conviene hacerlo en backend o con índice único parcial SQL.
 }
 
 model Promocion {
-  id             Int      @id @default(autoincrement())
-  titulo         String
-  descripcion    String?
-  negocioId      Int
-  creadoEn       DateTime @default(now())
-  descuento      Float
-  fechaCaducidad DateTime
-  productoId     Int?
+  id               Int             @id @default(autoincrement())
+  titulo           String
+  descripcion      String?
+  negocioId        Int
+  tipoDescuento    TipoDescuento   @default(PORCENTAJE)
+  /// Se interpreta según `tipoDescuento`.
+  /// - PORCENTAJE: 0-100
+  /// - IMPORTE_FIJO: importe monetario
+  /// - PACK / DOS_X_UNO: usar junto con backend para semántica exacta
+  /// TODO: validar descuento según tipo y evitar valores negativos.
+  descuento        Decimal         @db.Decimal(10, 2)
+  fechaInicio      DateTime?
+  fechaCaducidad   DateTime
+  activa           Boolean         @default(true)
+  estado           ContenidoEstado @default(PUBLICADO)
+  moderadoEn       DateTime?
+  motivoModeracion String?
+  stockMaximo      Int?
+  usosMaximos      Int?
+  usosActuales     Int             @default(0)
+  codigo           String?
+  productoId       Int?
+  creadoEn         DateTime        @default(now())
+  actualizadoEn    DateTime        @updatedAt
+  eliminadoEn      DateTime?
 
-  negocio  Negocio    @relation(fields: [negocioId], references: [id])
-  producto Producto?  @relation("ProductoPrincipal", fields: [productoId], references: [id])
-  pack     Producto[] @relation("PromocionPack")
-  Post     Post[]
+  negocio         Negocio          @relation(fields: [negocioId], references: [id])
+  producto        Producto?        @relation("ProductoPrincipal", fields: [productoId], references: [id])
+  pack            Producto[]       @relation("PromocionPack")
+  Post            Post[]
+  pedidoProductos PedidoProducto[]
 
   @@index([negocioId])
+  @@index([negocioId, fechaCaducidad])
   @@index([productoId])
   @@index([fechaCaducidad])
+  @@index([codigo])
+  @@index([estado])
+  @@index([activa])
 }
 
 model Logro {
@@ -216,8 +379,12 @@ model Logro {
   descripcion      String?
   tipo             LogroTipo
   dificultad       Dificultad @default(FACIL)
+  /// TODO: validar en backend/SQL manual que umbral > 0.
   umbral           Int
+  /// TODO: validar en backend/SQL manual que recompensaPuntos >= 0.
   recompensaPuntos Int
+  creadoEn         DateTime   @default(now())
+  actualizadoEn    DateTime   @updatedAt
 
   categoriaId    Int?
   subcategoriaId Int?
@@ -236,135 +403,223 @@ model Logro {
   @@index([subcategoriaId])
   @@index([negocioId])
   @@index([productoId])
+  @@index([tipo])
 }
 
 model Pedido {
-  id        Int          @id @default(autoincrement())
-  negocioId Int
-  estado    PedidoEstado @default(PENDIENTE)
-  creadoEn  DateTime     @default(now())
+  id            Int          @id @default(autoincrement())
+  negocioId     Int
+  estado        PedidoEstado @default(PENDIENTE)
+  creadoEn      DateTime     @default(now())
+  actualizadoEn DateTime     @updatedAt
 
+  /// Pedido representa el carrito o pedido operativo previo a la materialización de compra.
   negocio         Negocio          @relation(fields: [negocioId], references: [id])
   pedidoProductos PedidoProducto[]
   compras         Compra[]
 
   @@index([negocioId])
+  @@index([estado, creadoEn])
 }
 
 model Compra {
-  id        Int          @id @default(autoincrement())
-  pedidoId  Int
-  usuarioId Int
-  total     Float
-  estado    CompraEstado @default(PENDIENTE)
-  creadoEn  DateTime     @default(now())
+  id            Int          @id @default(autoincrement())
+  pedidoId      Int
+  usuarioId     Int
+  negocioId     Int
+  /// Snapshot del total de la compra al materializarse.
+  /// TODO: validar en backend/SQL manual que total >= 0.
+  total         Decimal      @db.Decimal(10, 2)
+  estado        CompraEstado @default(PENDIENTE)
+  creadoEn      DateTime     @default(now())
+  actualizadoEn DateTime     @updatedAt
 
+  /// Compra mantiene trazabilidad separada de Pedido y Pago para no perder histórico transaccional.
   pedido  Pedido  @relation(fields: [pedidoId], references: [id])
   usuario Usuario @relation(fields: [usuarioId], references: [id])
+  negocio Negocio @relation(fields: [negocioId], references: [id])
   pagos   Pago[]
 
+  @@unique([pedidoId, usuarioId])
   @@index([pedidoId])
   @@index([usuarioId])
+  @@index([negocioId])
+  @@index([estado, creadoEn])
 }
 
 model Pago {
-  id         Int        @id @default(autoincrement())
-  compraId   Int
-  metodoPago MetodoPago
-  estado     PagoEstado @default(PENDIENTE)
-  cantidad   Float
-  creadoEn   DateTime   @default(now())
+  id            Int        @id @default(autoincrement())
+  compraId      Int
+  usuarioId     Int
+  metodoPago    MetodoPago
+  estado        PagoEstado @default(PENDIENTE)
+  /// TODO: validar en backend/SQL manual que cantidad >= 0.
+  cantidad      Decimal    @db.Decimal(10, 2)
+  creadoEn      DateTime   @default(now())
+  actualizadoEn DateTime   @updatedAt
 
-  compra Compra @relation(fields: [compraId], references: [id])
+  /// Pago conserva cada intento o evento de cobro asociado a la compra.
+  compra  Compra  @relation(fields: [compraId], references: [id])
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
 
   @@index([compraId])
+  @@index([usuarioId])
+  @@index([estado, creadoEn])
 }
 
 model Reserva {
-  id        Int      @id @default(autoincrement())
-  fecha     DateTime
-  usuarioId Int
-  negocioId Int
-  nota      String?
-  creadoEn  DateTime @default(now())
+  id                 Int          @id @default(autoincrement())
+  fecha              DateTime
+  estado             ReservaEstado @default(PENDIENTE)
+  usuarioId          Int
+  negocioId          Int
+  nota               String?
+  duracionMinutos    Int?
+  numPersonas        Int?
+  canceladaEn        DateTime?
+  motivoCancelacion  String?
+  creadoEn           DateTime     @default(now())
+  actualizadoEn      DateTime     @updatedAt
 
   negocio Negocio @relation(fields: [negocioId], references: [id])
   usuario Usuario @relation(fields: [usuarioId], references: [id])
 
+  @@unique([negocioId, fecha])
   @@index([negocioId])
   @@index([usuarioId])
   @@index([fecha])
+  @@index([estado])
+  // TODO: validar en backend/SQL manual que duracionMinutos > 0 y numPersonas > 0 cuando se informen.
 }
 
 model Comentario {
-  id        Int      @id @default(autoincrement())
-  contenido String
-  usuarioId Int
-  postId    Int
-  creadoEn  DateTime @default(now())
+  id               Int             @id @default(autoincrement())
+  contenido        String
+  estado           ContenidoEstado @default(PUBLICADO)
+  moderadoEn       DateTime?
+  motivoModeracion String?
+  usuarioId        Int
+  postId           Int
+  creadoEn         DateTime        @default(now())
+  actualizadoEn    DateTime        @updatedAt
+  eliminadoEn      DateTime?
 
   usuario Usuario @relation(fields: [usuarioId], references: [id])
-  post    Post    @relation(fields: [postId], references: [id])
+  post    Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@index([postId])
   @@index([usuarioId])
+  @@index([estado])
 }
 
 model Like {
   id        Int      @id @default(autoincrement())
-  tipo      String // 'like'
+  tipo      LikeTipo @default(LIKE)
   usuarioId Int
   postId    Int
   creadoEn  DateTime @default(now())
 
   usuario Usuario @relation(fields: [usuarioId], references: [id])
-  post    Post    @relation(fields: [postId], references: [id])
+  post    Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@unique([usuarioId, postId])
   @@index([postId])
 }
 
 model PedidoProducto {
-  id             Int   @id @default(autoincrement())
-  pedidoId       Int
-  productoId     Int
-  cantidad       Int
-  precioUnitario Float
+  id                 Int      @id @default(autoincrement())
+  pedidoId           Int
+  productoId         Int
+  promocionId        Int?
+  /// TODO: validar en backend/SQL manual que cantidad > 0.
+  cantidad           Int
+  /// Snapshot del precio unitario aplicado en el momento del pedido.
+  /// TODO: validar en backend/SQL manual que precioUnitario >= 0.
+  precioUnitario     Decimal  @db.Decimal(10, 2)
+  /// Descuento monetario aplicado sobre la línea en ese momento.
+  /// TODO: validar en backend/SQL manual que descuentoAplicado >= 0 cuando exista.
+  descuentoAplicado  Decimal? @db.Decimal(10, 2)
+  /// TODO: validar en backend/SQL manual que subtotal >= 0 y sea coherente con cantidad/precio/descuento.
+  subtotal           Decimal  @db.Decimal(10, 2)
+  creadoEn           DateTime @default(now())
+  actualizadoEn      DateTime @updatedAt
 
-  pedido   Pedido   @relation(fields: [pedidoId], references: [id])
-  producto Producto @relation(fields: [productoId], references: [id])
+  pedido            Pedido     @relation(fields: [pedidoId], references: [id])
+  producto          Producto   @relation(fields: [productoId], references: [id])
+  promocionAplicada Promocion? @relation(fields: [promocionId], references: [id])
 
   @@unique([pedidoId, productoId])
   @@index([pedidoId])
   @@index([productoId])
+  @@index([promocionId])
 }
 
 model LogroUsuario {
-  id           Int       @id @default(autoincrement())
+  id           Int      @id @default(autoincrement())
   logroId      Int
   usuarioId    Int
-  veces        Int       @default(0)
-  conseguido   Boolean   @default(false)
+  veces        Int      @default(0)
+  conseguido   Boolean  @default(false)
   conseguidoEn DateTime?
+  actualizadoEn DateTime @updatedAt
 
   logro   Logro   @relation(fields: [logroId], references: [id])
   usuario Usuario @relation(fields: [usuarioId], references: [id])
 
   @@unique([logroId, usuarioId])
   @@index([usuarioId])
+  @@index([conseguido])
+}
+
+model NegocioMiembro {
+  id            Int        @id @default(autoincrement())
+  negocioId     Int
+  usuarioId     Int
+  rol           RolNegocio @default(EMPLEADO)
+  creadoEn      DateTime   @default(now())
+  actualizadoEn DateTime   @updatedAt
+
+  negocio Negocio @relation(fields: [negocioId], references: [id])
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@unique([negocioId, usuarioId])
+  @@index([negocioId])
+  @@index([usuarioId])
+  @@index([rol])
 }
 
 model PetaloTx {
-  id        Int      @id @default(autoincrement())
-  usuarioId Int
-  delta     Int
-  motivo    String // 'resena_autor' | 'resena_negocio' | 'like' | ...
-  refTipo   String?
-  refId     Int?
-  creadoEn  DateTime @default(now())
+  id             Int      @id @default(autoincrement())
+  usuarioId      Int
+  delta          Int
+  saldoResultante Int?
+  motivo         MotivoTx
+  descripcion    String?
+  metadata       Json?
+  /// Referencia polimórfica flexible para trazabilidad.
+  /// TODO: `refTipo` + `refId` no garantizan integridad referencial fuerte; validarlo en backend si hace falta.
+  refTipo        String?
+  refId          Int?
+  creadoEn       DateTime @default(now())
 
   usuario Usuario @relation(fields: [usuarioId], references: [id])
 
   @@index([usuarioId, creadoEn])
+  @@index([usuarioId, motivo, creadoEn])
   @@index([refTipo, refId])
+}
+
+model UsuarioSeguimiento {
+  id         Int      @id @default(autoincrement())
+  seguidorId Int
+  seguidoId  Int
+  creadoEn   DateTime @default(now())
+
+  seguidor Usuario @relation("UsuarioSeguidor", fields: [seguidorId], references: [id])
+  seguido  Usuario @relation("UsuarioSeguido", fields: [seguidoId], references: [id])
+
+  @@unique([seguidorId, seguidoId])
+  @@index([seguidorId])
+  @@index([seguidoId])
+  // TODO: impedir auto-follow (`seguidorId != seguidoId`) en backend o con CHECK SQL manual.
 }

@@ -6,6 +6,7 @@
 //
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -65,17 +66,21 @@ export class AuthService {
   }
 
   async register(dto: RegisterDto) {
+    const normalizedEmail = dto.email.toLowerCase().trim();
+    const normalizedNickname = dto.nickname.trim();
     const exists = await this.prisma.usuario.findFirst({
-      where: { OR: [{ email: dto.email }, { nickname: dto.nickname }] },
+      where: {
+        OR: [{ email: normalizedEmail }, { nickname: normalizedNickname }],
+      },
     });
-    if (exists) throw new BadRequestException('Email o nickname ya en uso');
+    if (exists) throw new ConflictException('Email o nickname ya en uso');
 
     const hash = await bcrypt.hash(dto.password, 10);
     return this.prisma.usuario.create({
       data: {
         nombre: dto.nombre.trim(),
-        nickname: dto.nickname.trim(),
-        email: dto.email.toLowerCase().trim(),
+        nickname: normalizedNickname,
+        email: normalizedEmail,
         password: hash,
       },
       select: {
@@ -154,4 +159,3 @@ export class AuthService {
     });
   }
 }
-

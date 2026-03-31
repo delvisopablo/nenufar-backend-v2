@@ -18,10 +18,14 @@ import { CreateNegocioDto } from './dto/create-negocio.dto';
 import { UpdateNegocioDto } from './dto/update-negocio.dto';
 import { QueryNegocioDto } from './dto/query-negocio.dto';
 import { ConfigHorarioDto } from './dto/config-horario.dto';
+import { ResenaService } from '../reseña/resena.service';
 
 @Controller('negocios')
 export class NegocioController {
-  constructor(private service: NegocioService) {}
+  constructor(
+    private service: NegocioService,
+    private readonly resenaService: ResenaService,
+  ) {}
 
   @Get()
   list(@Query() q: QueryNegocioDto) {
@@ -31,6 +35,11 @@ export class NegocioController {
   @Get(':id')
   get(@Param('id', ParseIntPipe) id: number) {
     return this.service.getById(id);
+  }
+
+  @Get(':id/resenas')
+  resenas(@Param('id', ParseIntPipe) id: number) {
+    return this.resenaService.getResenasPorNegocio(id);
   }
 
   @Post()

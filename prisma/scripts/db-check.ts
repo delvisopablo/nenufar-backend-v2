@@ -15,6 +15,7 @@ async function main() {
   await count('Categoria', () => prisma.categoria.count());
   await count('Subcategoria', () => prisma.subcategoria.count());
   await count('Negocio', () => prisma.negocio.count());
+  await count('NegocioMiembro', () => prisma.negocioMiembro.count());
   await count('Producto', () => prisma.producto.count());
   await count('Resena', () => prisma.resena.count());
   await count('Post', () => prisma.post.count());

@@ -1,5 +1,5 @@
 import { CommonModule } from './common/common.module';
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -13,13 +13,11 @@ import { LogroModule } from './logro/logro.module';
 import { ReservaModule } from './reserva/reserva.module';
 import { ProductoModule } from './producto/producto.module';
 import { JwtModule } from '@nestjs/jwt';
-import { NegocioController } from './negocio/negocio.controller';
-import { PromocionController } from './promocion/promocion.controller';
-import { ResenaController } from './reseña/resena.controller';
 import { CategoriaModule } from './categoria/categoria.module';
 import { PostModule } from './post/post.module';
 import { PetalosModule } from './petalos/petalos.module';
 import { PedidoModule } from './pedido/pedido.module';
+import { AuthUserMiddleware } from './auth/auth-user.middleware';
 
 @Module({
   imports: [
@@ -42,12 +40,11 @@ import { PedidoModule } from './pedido/pedido.module';
       signOptions: { expiresIn: '1d' },
     }),
   ],
-  controllers: [
-    AppController,
-    NegocioController,
-    PromocionController,
-    ResenaController,
-  ],
-  providers: [AppService, PrismaService],
+  controllers: [AppController],
+  providers: [AppService, PrismaService, AuthUserMiddleware],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(AuthUserMiddleware).forRoutes('*');
+  }
+}

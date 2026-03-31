@@ -65,3 +65,4 @@ dist/
 .env
 coverage/
 .tmp/
+.env.test

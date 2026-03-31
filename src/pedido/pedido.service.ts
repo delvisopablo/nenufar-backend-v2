@@ -13,7 +13,7 @@ import { UpdateItemDto } from './dto/update-item.dto';
 import { UpdatePedidoDto } from './dto/update-pedido.dto';
 import { CreateCompraDto } from './dto/create-compra.dto';
 import { CreatePagoDto } from './dto/create-pago.dto';
-import { CompraEstado, PagoEstado, PedidoEstado } from '@prisma/client';
+import { CompraEstado, PagoEstado, PedidoEstado, Prisma } from '@prisma/client';
 
 function toPaging(page?: number | string, limit?: number | string) {
   const p = Math.max(1, Number(page ?? 1) | 0);
@@ -145,6 +145,7 @@ export class PedidoService {
   ) {
     const pedido = await this.prisma.pedido.findUnique({
       where: { id: pedidoId },
+      select: { id: true, estado: true, negocioId: true },
     });
     if (!pedido) throw new NotFoundException('Pedido no encontrado');
     if (pedido.estado !== PedidoEstado.PENDIENTE)
@@ -154,14 +155,27 @@ export class PedidoService {
     if (total <= 0) throw new BadRequestException('Pedido vacío');
 
     // una compra por usuario-pedido; si quisieras split múltiple, haz otra tabla puente
-    return this.prisma.compra.create({
-      data: {
-        pedidoId,
-        usuarioId,
-        total,
-        estado: CompraEstado.PENDIENTE,
-      },
-    });
+    try {
+      return await this.prisma.compra.create({
+        data: {
+          pedidoId,
+          usuarioId,
+          negocioId: pedido.negocioId,
+          total,
+          estado: CompraEstado.PENDIENTE,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new BadRequestException(
+          'Ya existe una compra para este pedido y usuario',
+        );
+      }
+      throw error;
+    }
   }
 
   async getCompra(id: number) {
@@ -227,9 +241,16 @@ export class PedidoService {
   async createPago(compraId: number, dto: CreatePagoDto) {
     // no hacemos lógica de gateway; solo registramos pago y si es PAGADO
     return this.prisma.$transaction(async (tx) => {
+      const compra = await tx.compra.findUnique({
+        where: { id: compraId },
+        select: { id: true, usuarioId: true },
+      });
+      if (!compra) throw new NotFoundException('Compra no encontrada');
+
       const pago = await tx.pago.create({
         data: {
           compraId,
+          usuarioId: compra.usuarioId,
           metodoPago: dto.metodoPago,
           estado: dto.estado,
           cantidad: dto.cantidad,
@@ -259,13 +280,13 @@ export class PedidoService {
     const { skip, take, page: p, limit: l } = toPaging(page, limit);
     const [items, total] = await this.prisma.$transaction([
       this.prisma.pago.findMany({
-        where: { compra: { usuarioId } },
+        where: { usuarioId },
         include: { compra: true },
         orderBy: { creadoEn: 'desc' },
         skip,
         take,
       }),
-      this.prisma.pago.count({ where: { compra: { usuarioId } } }),
+      this.prisma.pago.count({ where: { usuarioId } }),
     ]);
     return { items, total, page: p, limit: l };
   }

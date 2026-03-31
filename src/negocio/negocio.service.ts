@@ -8,6 +8,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { RolNegocio } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateNegocioDto } from './dto/create-negocio.dto';
 import { UpdateNegocioDto } from './dto/update-negocio.dto';
@@ -153,7 +154,17 @@ export class NegocioService {
     };
 
     try {
-      return await this.prisma.negocio.create({ data });
+      return await this.prisma.$transaction(async (tx) => {
+        const negocio = await tx.negocio.create({ data });
+        await tx.negocioMiembro.create({
+          data: {
+            negocioId: negocio.id,
+            usuarioId: currentUserId,
+            rol: RolNegocio.DUENO,
+          },
+        });
+        return negocio;
+      });
     } catch {
       // P2003 FK inválida, P2002 unique (si pones unique en nombre)
       throw new BadRequestException(

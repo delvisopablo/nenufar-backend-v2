@@ -5,6 +5,8 @@ import {
   IsInt,
   IsArray,
   IsNumber,
+  Max,
+  Min,
 } from 'class-validator';
 
 export class CreatePromocionDto {
@@ -19,7 +21,9 @@ export class CreatePromocionDto {
   fechaCaducidad: string; // 👈 ISO date
 
   @IsNumber()
-  descuento: number; // 👈 porcentaje o valor fijo
+  @Min(0)
+  @Max(100)
+  descuento: number;
 
   @IsOptional()
   @IsInt()

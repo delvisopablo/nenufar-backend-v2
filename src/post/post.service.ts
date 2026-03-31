@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { LikeTipo, MotivoTx, PostTipo, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 function toPaging(page?: number | string, limit?: number | string) {
@@ -16,12 +17,11 @@ function toPaging(page?: number | string, limit?: number | string) {
 export class PostService {
   constructor(private prisma: PrismaService) {}
 
-  private tipoToWhere(tipo?: 'resena' | 'promocion' | 'logro') {
-    if (!tipo) return {};
-    if (tipo === 'resena') return { resenaId: { not: null } };
-    if (tipo === 'promocion') return { promocionId: { not: null } };
-    if (tipo === 'logro') return { logroId: { not: null } };
-    return {};
+  private tipoToEnum(tipo?: 'resena' | 'promocion' | 'logro') {
+    if (tipo === 'resena') return PostTipo.RESENA;
+    if (tipo === 'promocion') return PostTipo.PROMOCION;
+    if (tipo === 'logro') return PostTipo.LOGRO;
+    return undefined;
   }
 
   async list(params: {
@@ -34,17 +34,15 @@ export class PostService {
   }) {
     const { skip, take, page, limit } = toPaging(params.page, params.limit);
 
-    // Import Prisma types at the top if not already imported:
-    // import { Prisma } from '@prisma/client';
-
-    let where: import('@prisma/client').Prisma.PostWhereInput = {
-      ...this.tipoToWhere(params.tipo),
+    const tipo = this.tipoToEnum(params.tipo);
+    let where: Prisma.PostWhereInput = {
+      ...(tipo ? { tipo } : {}),
       ...(params.usuarioId ? { usuarioId: params.usuarioId } : {}),
       ...(params.negocioId ? { negocioId: params.negocioId } : {}),
     };
 
     // búsqueda simple por contenido de reseña (si aplica)
-    const include: import('@prisma/client').Prisma.PostInclude = {
+    const include: Prisma.PostInclude = {
       usuario: { select: { id: true, nombre: true } },
       _count: { select: { likes: true, comentarios: true } },
       resena: true,
@@ -126,14 +124,14 @@ export class PostService {
 
     return this.prisma.$transaction(async (tx) => {
       await tx.like.create({
-        data: { postId, usuarioId: userId, tipo: 'like' },
+        data: { postId, usuarioId: userId, tipo: LikeTipo.LIKE },
       });
 
       await tx.petaloTx.create({
         data: {
           usuarioId: userId,
           delta: -1,
-          motivo: 'like',
+          motivo: MotivoTx.LIKE,
           refTipo: 'Post',
           refId: postId,
         },
