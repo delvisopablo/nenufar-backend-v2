@@ -18,6 +18,7 @@ import { PostModule } from './post/post.module';
 import { PetalosModule } from './petalos/petalos.module';
 import { PedidoModule } from './pedido/pedido.module';
 import { AuthUserMiddleware } from './auth/auth-user.middleware';
+import { HealthController } from './health.controller';
 
 @Module({
   imports: [
@@ -40,7 +41,7 @@ import { AuthUserMiddleware } from './auth/auth-user.middleware';
       signOptions: { expiresIn: '1d' },
     }),
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [AppService, PrismaService, AuthUserMiddleware],
 })
 export class AppModule implements NestModule {

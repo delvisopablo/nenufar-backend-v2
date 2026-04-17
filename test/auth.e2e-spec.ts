@@ -93,9 +93,7 @@ describe('Auth E2E', () => {
     expect(response.body).toEqual(
       expect.objectContaining({
         statusCode: 400,
-        message: expect.arrayContaining([
-          expect.stringContaining('password'),
-        ]),
+        message: expect.arrayContaining([expect.stringContaining('password')]),
       }),
     );
   });

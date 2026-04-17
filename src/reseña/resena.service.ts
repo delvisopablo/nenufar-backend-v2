@@ -14,49 +14,81 @@ import { UpdateResenaDto } from './dto/update-resena.dto';
 export class ResenaService {
   constructor(private prisma: PrismaService) {}
 
+  private mapResena<T extends Record<string, any>>(resena: T) {
+    return {
+      ...resena,
+      comentario: resena.contenido,
+      fecha: resena.creadoEn,
+    };
+  }
+
   /** Listado global (paginable si quieres luego) */
   async todasLasResenas() {
-    return this.prisma.resena.findMany({
-      include: {
+    const resenas = await this.prisma.resena.findMany({
+      select: {
+        id: true,
+        contenido: true,
+        puntuacion: true,
+        creadoEn: true,
         usuario: { select: { id: true, nombre: true, foto: true } },
         negocio: { select: { id: true, nombre: true } },
       },
       orderBy: { creadoEn: 'desc' },
     });
+
+    return resenas.map((resena) => this.mapResena(resena));
   }
 
   /** Reseñas por negocio */
   async getResenasPorNegocio(negocioId: number) {
-    return this.prisma.resena.findMany({
+    const resenas = await this.prisma.resena.findMany({
       where: { negocioId },
-      include: {
+      select: {
+        id: true,
+        contenido: true,
+        puntuacion: true,
+        creadoEn: true,
         usuario: { select: { id: true, nombre: true, foto: true } },
       },
       orderBy: { creadoEn: 'desc' },
     });
+
+    return resenas.map((resena) => this.mapResena(resena));
   }
 
   /** Reseñas por usuario */
   async findByUsuarioId(usuarioId: number) {
-    return this.prisma.resena.findMany({
+    const resenas = await this.prisma.resena.findMany({
       where: { usuarioId },
-      include: {
+      select: {
+        id: true,
+        contenido: true,
+        puntuacion: true,
+        creadoEn: true,
         negocio: { select: { id: true, nombre: true } },
       },
       orderBy: { creadoEn: 'desc' },
     });
+
+    return resenas.map((resena) => this.mapResena(resena));
   }
 
   /** Últimas N reseñas (por defecto 10) */
   async obtenerUltimas(limit = 10) {
-    return this.prisma.resena.findMany({
+    const resenas = await this.prisma.resena.findMany({
       take: limit,
       orderBy: { creadoEn: 'desc' },
-      include: {
+      select: {
+        id: true,
+        contenido: true,
+        puntuacion: true,
+        creadoEn: true,
         usuario: { select: { id: true, nombre: true, foto: true } },
         negocio: { select: { id: true, nombre: true } },
       },
     });
+
+    return resenas.map((resena) => this.mapResena(resena));
   }
 
   /** Media de puntuación y número de reseñas de un negocio */
@@ -83,7 +115,9 @@ export class ResenaService {
         select: { id: true },
       });
       if (existing) {
-        throw new ConflictException('Ya existe una reseña tuya para este negocio');
+        throw new ConflictException(
+          'Ya existe una reseña tuya para este negocio',
+        );
       }
 
       // crear reseña

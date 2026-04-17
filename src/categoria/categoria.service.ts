@@ -26,7 +26,8 @@ export class CategoriaService {
     includeCounts?: boolean | string;
     includeSubcategorias?: boolean | string;
   }) {
-    const { q, sort, page, limit, includeCounts, includeSubcategorias } = params;
+    const { q, sort, page, limit, includeCounts, includeSubcategorias } =
+      params;
     const { skip, take } = toPaging(page, limit);
 
     const where = q
@@ -34,35 +35,76 @@ export class CategoriaService {
       : undefined;
 
     const orderBy =
-      sort === '-nombre' ? { nombre: 'desc' as const } : { nombre: 'asc' as const };
+      sort === '-nombre'
+        ? { nombre: 'desc' as const }
+        : { nombre: 'asc' as const };
 
-    const include: any = {};
-    // si quieres contar negocios por categoría
-    if (includeCounts === true || String(includeCounts).toLowerCase() === 'true') {
-      include._count = { select: { negocios: true } };
-    }
-    // solo funciona si tienes el modelo Subcategoria en prisma
-    if (
+    const wantsCounts =
+      includeCounts === true || String(includeCounts).toLowerCase() === 'true';
+    const wantsSubcategorias =
       includeSubcategorias === true ||
-      String(includeSubcategorias).toLowerCase() === 'true'
-    ) {
-      include.subcategorias = true;
-    }
+      String(includeSubcategorias).toLowerCase() === 'true';
+    const [items, total] =
+      wantsCounts || wantsSubcategorias
+        ? await this.prisma.$transaction([
+            this.prisma.categoria.findMany({
+              where,
+              orderBy,
+              skip,
+              take,
+              include: {
+                ...(wantsCounts
+                  ? { _count: { select: { negocios: true } } }
+                  : {}),
+                ...(wantsSubcategorias ? { subcategorias: true } : {}),
+              },
+            }),
+            this.prisma.categoria.count({ where }),
+          ])
+        : await this.prisma.$transaction([
+            this.prisma.categoria.findMany({
+              where,
+              orderBy,
+              skip,
+              take,
+              select: {
+                id: true,
+                nombre: true,
+              },
+            }),
+            this.prisma.categoria.count({ where }),
+          ]);
 
-    const [items, total] = await this.prisma.$transaction([
-      this.prisma.categoria.findMany({ where, orderBy, skip, take, include }),
-      this.prisma.categoria.count({ where }),
-    ]);
-
-    return { items, total, page: Number(page ?? 1), limit: Number(limit ?? 20) };
+    return {
+      items,
+      total,
+      page: Number(page ?? 1),
+      limit: Number(limit ?? 20),
+    };
   }
 
-  async getById(id: number, opts?: { includeCounts?: boolean; includeSubcategorias?: boolean }) {
-    const include: any = {};
-    if (opts?.includeCounts) include._count = { select: { negocios: true } };
-    if (opts?.includeSubcategorias) include.subcategorias = true;
-
-    const cat = await this.prisma.categoria.findUnique({ where: { id }, include });
+  async getById(
+    id: number,
+    opts?: { includeCounts?: boolean; includeSubcategorias?: boolean },
+  ) {
+    const cat =
+      opts?.includeCounts || opts?.includeSubcategorias
+        ? await this.prisma.categoria.findUnique({
+            where: { id },
+            include: {
+              ...(opts?.includeCounts
+                ? { _count: { select: { negocios: true } } }
+                : {}),
+              ...(opts?.includeSubcategorias ? { subcategorias: true } : {}),
+            },
+          })
+        : await this.prisma.categoria.findUnique({
+            where: { id },
+            select: {
+              id: true,
+              nombre: true,
+            },
+          });
     if (!cat) throw new NotFoundException('Categoría no encontrada');
     return cat;
   }
@@ -88,7 +130,8 @@ export class CategoriaService {
     } catch (e: any) {
       if (e?.code === 'P2002')
         throw new ConflictException('Ya existe una categoría con ese nombre');
-      if (e?.code === 'P2025') throw new NotFoundException('Categoría no encontrada');
+      if (e?.code === 'P2025')
+        throw new NotFoundException('Categoría no encontrada');
       throw e;
     }
   }
@@ -101,7 +144,8 @@ export class CategoriaService {
         throw new BadRequestException(
           'No se puede eliminar: tiene elementos vinculados (negocios/subcategorías)',
         );
-      if (e?.code === 'P2025') throw new NotFoundException('Categoría no encontrada');
+      if (e?.code === 'P2025')
+        throw new NotFoundException('Categoría no encontrada');
       throw e;
     }
   }

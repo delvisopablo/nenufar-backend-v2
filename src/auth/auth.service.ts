@@ -5,7 +5,6 @@
 
 //
 import {
-  BadRequestException,
   ConflictException,
   Injectable,
   UnauthorizedException,
@@ -15,7 +14,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcryptjs';
 import { JwtService } from '@nestjs/jwt';
-import { Response, Request } from 'express';
+import { CookieOptions, Response, Request } from 'express';
 
 function parseTTL(s?: string, fallbackSeconds = 900) {
   if (!s) return fallbackSeconds;
@@ -34,16 +33,33 @@ export class AuthService {
     private jwt: JwtService,
   ) {}
 
-  private cookieOpts(ttlSeconds: number) {
+  private cookieOpts(ttlSeconds: number): CookieOptions {
     const isProd = process.env.NODE_ENV === 'production';
-    return {
+    const cookieDomain = process.env.COOKIE_DOMAIN?.trim();
+    const options: CookieOptions = {
       httpOnly: true,
       secure: isProd,
-      sameSite: 'lax' as const,
+      sameSite: isProd ? 'none' : 'lax',
       maxAge: ttlSeconds * 1000,
-      domain: process.env.COOKIE_DOMAIN || 'localhost',
       path: '/',
     };
+
+    if (cookieDomain) {
+      options.domain = cookieDomain;
+    }
+
+    return options;
+  }
+
+  private clearCookieOpts(): CookieOptions {
+    const cookieDomain = process.env.COOKIE_DOMAIN?.trim();
+    const options: CookieOptions = { path: '/' };
+
+    if (cookieDomain) {
+      options.domain = cookieDomain;
+    }
+
+    return options;
   }
 
   private async signTokens(user: {
@@ -136,8 +152,9 @@ export class AuthService {
   }
 
   logout(res: Response) {
-    res.clearCookie('access_token', { path: '/' });
-    res.clearCookie('refresh_token', { path: '/' });
+    const cookieOptions = this.clearCookieOpts();
+    res.clearCookie('access_token', cookieOptions);
+    res.clearCookie('refresh_token', cookieOptions);
     return { ok: true };
   }
 

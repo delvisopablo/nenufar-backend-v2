@@ -95,16 +95,16 @@ export class NegocioService {
         : {}),
     };
 
-    const include = {
-      categoria: true,
-      subcategoria: true,
-      _count: { select: { productos: true, resenas: true, posts: true } },
-    };
-
     const [items, total] = await this.prisma.$transaction([
       this.prisma.negocio.findMany({
         where,
-        include,
+        select: {
+          id: true,
+          nombre: true,
+          historia: true,
+          direccion: true,
+          categoria: { select: { id: true, nombre: true } },
+        },
         orderBy: { creadoEn: 'desc' },
         skip,
         take,
@@ -117,22 +117,43 @@ export class NegocioService {
 
   // DETAIL
   async getById(id: number) {
-    const n = await this.prisma.negocio.findUnique({
-      where: { id },
-      include: {
-        categoria: true,
-        subcategoria: true,
-        productos: { take: 10, orderBy: { id: 'desc' } },
-        _count: {
-          select: {
-            productos: true,
-            resenas: true,
-            posts: true,
-            reservas: true,
+    let n: any = null;
+
+    try {
+      n = await this.prisma.negocio.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          nombre: true,
+          historia: true,
+          direccion: true,
+          categoria: { select: { id: true, nombre: true } },
+          duenoId: true,
+          dueno: {
+            select: {
+              id: true,
+              nombre: true,
+              nickname: true,
+              foto: true,
+            },
           },
+          horario: true,
+          intervaloReserva: true,
         },
-      },
-    });
+      });
+    } catch {
+      n = await this.prisma.negocio.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          nombre: true,
+          historia: true,
+          direccion: true,
+          categoria: { select: { id: true, nombre: true } },
+        },
+      });
+    }
+
     if (!n) throw new NotFoundException('Negocio no encontrado');
     return n;
   }

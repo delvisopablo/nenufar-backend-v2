@@ -19,12 +19,9 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "NODE_ENV=test jest --runInBand --config ./jest-e2e.config.ts",
-    "db:seed": "ts-node prisma/seed.cjs",
+    "db:seed": "ts-node prisma/seed.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev"
-  },
-  "prisma": {
-    "seed": "ts-node prisma/seed.ts"
   },
   "engines": {
     "node": ">=20.0.0"

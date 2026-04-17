@@ -147,8 +147,7 @@ export class PedidoService {
       where: { pedidoId },
     });
     return lines.reduce(
-      (acc, l) =>
-        acc.add(new Prisma.Decimal(l.cantidad).mul(l.precioUnitario)),
+      (acc, l) => acc.add(new Prisma.Decimal(l.cantidad).mul(l.precioUnitario)),
       new Prisma.Decimal(0),
     );
   }

@@ -56,12 +56,17 @@ export function applyTestDatabaseUrl() {
   process.env.DATABASE_URL = databaseUrl;
 }
 
-export default async function globalSetup() {
+export default function globalSetup() {
   applyTestDatabaseUrl();
 
   execFileSync(
     prismaBinary,
-    ['migrate', 'deploy', '--schema', join(projectRoot, 'prisma', 'schema.prisma')],
+    [
+      'migrate',
+      'deploy',
+      '--schema',
+      join(projectRoot, 'prisma', 'schema.prisma'),
+    ],
     {
       cwd: projectRoot,
       env: process.env,
