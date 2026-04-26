@@ -1,3 +1,4 @@
+import { Transform, Type } from 'class-transformer';
 import {
   IsEnum,
   IsInt,
@@ -6,25 +7,15 @@ import {
   IsString,
   Min,
 } from 'class-validator';
-
-export enum LogroTipo {
-  GENERICO = 'GENERICA',
-  RESEÑA = 'RESEÑA',
-  NEGOCIO = 'NEGOCIO',
-  PRODUCTO = 'PRODUCTO',
-}
-
-export enum Dificultad {
-  FACIL = 'FACIL',
-  MEDIA = 'MEDIA',
-  DIFICIL = 'DIFICIL',
-}
+import { Dificultad, LogroTipo } from '@prisma/client';
 
 export class CreateLogroDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
   titulo: string;
 
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsOptional()
   @IsString()
   descripcion?: string;
@@ -35,26 +26,33 @@ export class CreateLogroDto {
   @IsEnum(Dificultad)
   dificultad: Dificultad = Dificultad.FACIL;
 
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   umbral: number;
 
+  @Type(() => Number)
   @IsInt()
+  @Min(0)
   recompensaPuntos: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   categoriaId?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   subcategoriaId?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   negocioId?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   productoId?: number;
 }

@@ -127,19 +127,21 @@ export class PostService {
         data: { postId, usuarioId: userId, tipo: LikeTipo.LIKE },
       });
 
+      const saldoUsuario = await tx.usuario.update({
+        where: { id: userId },
+        data: { petalosSaldo: { decrement: 1 } },
+        select: { petalosSaldo: true },
+      });
+
       await tx.petaloTx.create({
         data: {
           usuarioId: userId,
           delta: -1,
+          saldoResultante: saldoUsuario.petalosSaldo,
           motivo: MotivoTx.LIKE,
           refTipo: 'Post',
           refId: postId,
         },
-      });
-
-      await tx.usuario.update({
-        where: { id: userId },
-        data: { petalosSaldo: { decrement: 1 } },
       });
 
       return { ok: true };

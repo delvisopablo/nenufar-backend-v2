@@ -142,18 +142,20 @@ export class ResenaService {
       });
 
       // pagar pétalos al autor
+      const autor = await tx.usuario.update({
+        where: { id: userId },
+        data: { petalosSaldo: { increment: 5 } },
+        select: { petalosSaldo: true },
+      });
       await tx.petaloTx.create({
         data: {
           usuarioId: userId,
           delta: 5,
+          saldoResultante: autor.petalosSaldo,
           motivo: MotivoTx.RESENA_AUTOR,
           refTipo: 'Resena',
           refId: resena.id,
         },
-      });
-      await tx.usuario.update({
-        where: { id: userId },
-        data: { petalosSaldo: { increment: 5 } },
       });
 
       // pagar al dueño del negocio (si es distinto)
@@ -162,18 +164,20 @@ export class ResenaService {
         select: { duenoId: true },
       });
       if (dueno?.duenoId && dueno.duenoId !== userId) {
+        const saldoDueno = await tx.usuario.update({
+          where: { id: dueno.duenoId },
+          data: { petalosSaldo: { increment: 5 } },
+          select: { petalosSaldo: true },
+        });
         await tx.petaloTx.create({
           data: {
             usuarioId: dueno.duenoId,
             delta: 5,
+            saldoResultante: saldoDueno.petalosSaldo,
             motivo: MotivoTx.RESENA_NEGOCIO,
             refTipo: 'Resena',
             refId: resena.id,
           },
-        });
-        await tx.usuario.update({
-          where: { id: dueno.duenoId },
-          data: { petalosSaldo: { increment: 5 } },
         });
       }
 

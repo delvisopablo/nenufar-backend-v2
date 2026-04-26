@@ -1,4 +1,5 @@
 import {
+  IsInt,
   IsNumber,
   IsOptional,
   IsString,
@@ -21,4 +22,19 @@ export class UpdateProductoDto {
   @IsOptional()
   @Min(0)
   precio?: number;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(120)
+  codigoSKU?: string;
+
+  @IsInt()
+  @IsOptional()
+  @Min(0)
+  stockDisponible?: number;
+
+  @IsInt()
+  @IsOptional()
+  @Min(0)
+  stockReservado?: number;
 }

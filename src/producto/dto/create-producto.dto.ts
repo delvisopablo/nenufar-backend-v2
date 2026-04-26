@@ -1,4 +1,5 @@
 import {
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -21,4 +22,19 @@ export class CreateProductoDto {
   @IsNumber()
   @Min(0)
   precio!: number;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(120)
+  codigoSKU?: string;
+
+  @IsInt()
+  @IsOptional()
+  @Min(0)
+  stockDisponible?: number;
+
+  @IsInt()
+  @IsOptional()
+  @Min(0)
+  stockReservado?: number;
 }

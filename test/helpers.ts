@@ -1,9 +1,9 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { Categoria, PrismaClient, Subcategoria } from '@prisma/client';
-import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { PrismaService } from '../prisma/prisma.service';
+import { setupApp } from '../src/app.setup';
 import { AppModule } from '../src/app.module';
 
 type CookieHeader = string[];
@@ -14,8 +14,7 @@ export async function createTestApp() {
   }).compile();
 
   const app = moduleFixture.createNestApplication();
-  app.use(cookieParser());
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  setupApp(app);
   await app.init();
 
   return {

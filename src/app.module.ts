@@ -19,6 +19,9 @@ import { PetalosModule } from './petalos/petalos.module';
 import { PedidoModule } from './pedido/pedido.module';
 import { AuthUserMiddleware } from './auth/auth-user.middleware';
 import { HealthController } from './health.controller';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { RecursoModule } from './recurso/recurso.module';
+import { SubcategoriaModule } from './subcategoria/subcategoria.module';
 
 @Module({
   imports: [
@@ -35,6 +38,9 @@ import { HealthController } from './health.controller';
     ProductoModule,
     PetalosModule,
     PedidoModule,
+    DashboardModule,
+    RecursoModule,
+    SubcategoriaModule,
     ConfigModule.forRoot({ isGlobal: true }),
     JwtModule.register({
       secret: process.env.JWT_SECRET,

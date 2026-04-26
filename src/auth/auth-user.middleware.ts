@@ -5,6 +5,7 @@ import { NextFunction, Request, Response } from 'express';
 type AuthenticatedRequest = Request & {
   user?: {
     id: number;
+    sub?: number;
     email?: string;
     nickname?: string;
   };
@@ -36,6 +37,7 @@ export class AuthUserMiddleware implements NestMiddleware {
 
       req.user = {
         id: payload.sub,
+        sub: payload.sub,
         email: payload.email,
         nickname: payload.nickname,
       };

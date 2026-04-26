@@ -112,6 +112,16 @@ enum RolGlobal {
   ADMIN
 }
 
+/// Canal por el que se origina un pedido.
+/// Clave para segmentar ventas en el dashboard por canal.
+enum CanalVenta {
+  WEB
+  APP
+  PRESENCIAL
+  TELEFONO
+  OTRO
+}
+
 // ---------- Modelos ----------
 model Usuario {
   id             Int          @id @default(autoincrement())
@@ -130,7 +140,8 @@ model Usuario {
   estadoCuenta   EstadoCuenta @default(ACTIVA)
   rolGlobal      RolGlobal    @default(USUARIO)
 
-  // Economía (simple)
+  // Economía de pétalos — separada conceptualmente del flujo transaccional real.
+  // TODO: valorar mover PetaloTx a un schema/módulo propio para no contaminar queries de ventas.
   petalosSaldo Int        @default(0)
   petalosTx    PetaloTx[]
 
@@ -138,6 +149,7 @@ model Usuario {
   negocios        Negocio[]           @relation("DuenoNegocio")
   resenas         Resena[]
   reservas        Reserva[]
+  pedidos         Pedido[]
   compras         Compra[]
   pagos           Pago[]
   comentarios     Comentario[]
@@ -147,6 +159,7 @@ model Usuario {
   negocioMiembros NegocioMiembro[]
   siguiendo       UsuarioSeguimiento[] @relation("UsuarioSeguidor")
   seguidores      UsuarioSeguimiento[] @relation("UsuarioSeguido")
+  visitasNegocio  VisitaNegocio[]
 
   @@index([estadoCuenta])
   @@index([rolGlobal])
@@ -225,15 +238,17 @@ model Negocio {
   categoria Categoria @relation(fields: [categoriaId], references: [id])
   dueno     Usuario   @relation("DuenoNegocio", fields: [duenoId], references: [id])
 
-  productos   Producto[]
-  promociones Promocion[]
-  resenas     Resena[]
-  reservas    Reserva[]
-  logros      Logro[]
-  posts       Post[]
-  pedidos     Pedido[]
-  compras     Compra[]
-  miembros    NegocioMiembro[]
+  productos       Producto[]
+  promociones     Promocion[]
+  resenas         Resena[]
+  reservas        Reserva[]
+  logros          Logro[]
+  posts           Post[]
+  pedidos         Pedido[]
+  compras         Compra[]
+  miembros        NegocioMiembro[]
+  visitasNegocio  VisitaNegocio[]
+  recursos        RecursoReserva[]
 
   @@index([categoriaId])
   @@index([subcategoriaId])
@@ -256,6 +271,17 @@ model Producto {
   eliminadoEn   DateTime?
   negocioId     Int
 
+  /// Código interno de producto (SKU). Útil para filtros y búsqueda en dashboard.
+  codigoSKU     String?
+
+  /// Stock físico disponible para venta.
+  /// TODO: validar en backend/SQL manual que stockDisponible >= 0.
+  stockDisponible Int @default(0)
+
+  /// Stock bloqueado por pedidos en curso, pendiente de confirmar o liberar.
+  /// TODO: validar en backend/SQL manual que stockReservado >= 0 y <= stockDisponible + stockReservado.
+  stockReservado  Int @default(0)
+
   negocio            Negocio     @relation(fields: [negocioId], references: [id])
   promocionPrincipal Promocion[] @relation("ProductoPrincipal")
   promociones        Promocion[] @relation("PromocionPack")
@@ -265,6 +291,7 @@ model Producto {
 
   @@index([negocioId])
   @@index([activo])
+  @@index([codigoSKU])
 }
 
 model Post {
@@ -409,17 +436,27 @@ model Logro {
 model Pedido {
   id            Int          @id @default(autoincrement())
   negocioId     Int
+  /// Usuario que origina el pedido. Opcional para pedidos presenciales anónimos.
+  usuarioId     Int?
   estado        PedidoEstado @default(PENDIENTE)
+  /// Canal por el que se originó el pedido. Clave para el dashboard de ventas por canal.
+  canalVenta    CanalVenta   @default(WEB)
+  /// Snapshot del importe total al cierre del pedido.
+  /// Evita recalcular SUM(PedidoProducto.subtotal) en cada consulta del dashboard.
+  /// TODO: validar en backend/SQL manual que totalSnapshot >= 0 cuando se informe.
+  totalSnapshot Decimal?     @db.Decimal(10, 2)
   creadoEn      DateTime     @default(now())
   actualizadoEn DateTime     @updatedAt
 
-  /// Pedido representa el carrito o pedido operativo previo a la materialización de compra.
   negocio         Negocio          @relation(fields: [negocioId], references: [id])
+  usuario         Usuario?         @relation(fields: [usuarioId], references: [id])
   pedidoProductos PedidoProducto[]
   compras         Compra[]
 
   @@index([negocioId])
+  @@index([usuarioId])
   @@index([estado, creadoEn])
+  @@index([canalVenta])
 }
 
 model Compra {
@@ -430,6 +467,8 @@ model Compra {
   /// Snapshot del total de la compra al materializarse.
   /// TODO: validar en backend/SQL manual que total >= 0.
   total         Decimal      @db.Decimal(10, 2)
+  /// Código ISO 4217 de la moneda. Aunque hoy solo se use EUR, guardarlo evita migraciones futuras.
+  moneda        String       @default("EUR")
   estado        CompraEstado @default(PENDIENTE)
   creadoEn      DateTime     @default(now())
   actualizadoEn DateTime     @updatedAt
@@ -445,6 +484,7 @@ model Compra {
   @@index([usuarioId])
   @@index([negocioId])
   @@index([estado, creadoEn])
+  @@index([moneda])
 }
 
 model Pago {
@@ -455,6 +495,11 @@ model Pago {
   estado        PagoEstado @default(PENDIENTE)
   /// TODO: validar en backend/SQL manual que cantidad >= 0.
   cantidad      Decimal    @db.Decimal(10, 2)
+  /// Código ISO 4217 de la moneda. Debe coincidir con Compra.moneda.
+  moneda        String     @default("EUR")
+  /// ID de transacción externo (Stripe charge ID, referencia Bizum, etc.).
+  /// Imprescindible para reconciliación financiera en el dashboard.
+  refExterna    String?
   creadoEn      DateTime   @default(now())
   actualizadoEn DateTime   @updatedAt
 
@@ -465,31 +510,61 @@ model Pago {
   @@index([compraId])
   @@index([usuarioId])
   @@index([estado, creadoEn])
+  @@index([refExterna])
+}
+
+/// Recurso reservable dentro de un negocio (mesa, sala, empleado, pista...).
+/// Necesario para permitir múltiples reservas simultáneas en el mismo negocio.
+model RecursoReserva {
+  id            Int      @id @default(autoincrement())
+  negocioId     Int
+  nombre        String
+  descripcion   String?
+  capacidad     Int?
+  activo        Boolean  @default(true)
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+  eliminadoEn   DateTime?
+
+  negocio  Negocio   @relation(fields: [negocioId], references: [id])
+  reservas Reserva[]
+
+  @@index([negocioId])
+  @@index([activo])
 }
 
 model Reserva {
-  id                 Int          @id @default(autoincrement())
+  id                 Int           @id @default(autoincrement())
   fecha              DateTime
   estado             ReservaEstado @default(PENDIENTE)
   usuarioId          Int
   negocioId          Int
+  /// Recurso específico reservado (mesa, sala, empleado...).
+  /// Permite múltiples reservas simultáneas en el mismo negocio.
+  /// Si es null, el negocio no gestiona recursos diferenciados.
+  recursoId          Int?
   nota               String?
   duracionMinutos    Int?
   numPersonas        Int?
   canceladaEn        DateTime?
   motivoCancelacion  String?
-  creadoEn           DateTime     @default(now())
-  actualizadoEn      DateTime     @updatedAt
+  creadoEn           DateTime      @default(now())
+  actualizadoEn      DateTime      @updatedAt
 
-  negocio Negocio @relation(fields: [negocioId], references: [id])
-  usuario Usuario @relation(fields: [usuarioId], references: [id])
+  negocio  Negocio         @relation(fields: [negocioId], references: [id])
+  usuario  Usuario         @relation(fields: [usuarioId], references: [id])
+  recurso  RecursoReserva? @relation(fields: [recursoId], references: [id])
 
-  @@unique([negocioId, fecha])
+  /// Unicidad por negocio + recurso + fecha. Si recursoId es null, el backend debe
+  /// gestionar solapamientos de rango (fecha, fecha+duracion) para ese negocio.
+  @@unique([negocioId, recursoId, fecha])
   @@index([negocioId])
   @@index([usuarioId])
+  @@index([recursoId])
   @@index([fecha])
   @@index([estado])
   // TODO: validar en backend/SQL manual que duracionMinutos > 0 y numPersonas > 0 cuando se informen.
+  // TODO: para negocios sin recursoId, validar solapamientos de rango (fecha, fecha+duracion) en backend.
 }
 
 model Comentario {
@@ -541,6 +616,10 @@ model PedidoProducto {
   descuentoAplicado  Decimal? @db.Decimal(10, 2)
   /// TODO: validar en backend/SQL manual que subtotal >= 0 y sea coherente con cantidad/precio/descuento.
   subtotal           Decimal  @db.Decimal(10, 2)
+  /// Snapshot de la categoría del producto en el momento del pedido.
+  /// Permite filtrar ventas históricas por categoría sin depender de la categoría actual del producto.
+  /// Si el producto cambia de categoría, el histórico de ventas sigue siendo correcto.
+  categoriaIdSnapshot Int?
   creadoEn           DateTime @default(now())
   actualizadoEn      DateTime @updatedAt
 
@@ -552,6 +631,7 @@ model PedidoProducto {
   @@index([pedidoId])
   @@index([productoId])
   @@index([promocionId])
+  @@index([categoriaIdSnapshot])
 }
 
 model LogroUsuario {
@@ -588,19 +668,43 @@ model NegocioMiembro {
   @@index([rol])
 }
 
+/// Registro de visitas al perfil de un negocio.
+/// Permite calcular tasa de conversión (visitas → compras/reservas) en el dashboard.
+/// Tabla append-only: nunca se actualiza, solo se inserta.
+model VisitaNegocio {
+  id        Int      @id @default(autoincrement())
+  negocioId Int
+  /// Null si el visitante no está autenticado.
+  usuarioId Int?
+  /// Canal desde el que se realiza la visita (búsqueda, redes, directo...).
+  origen    String?
+  creadoEn  DateTime @default(now())
+
+  negocio Negocio  @relation(fields: [negocioId], references: [id])
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@index([negocioId, creadoEn])
+  @@index([usuarioId])
+  @@index([origen])
+}
+
+/// Transacciones del sistema de pétalos (economía de gamificación).
+/// NOTA: separado conceptualmente del flujo transaccional real (Compra/Pago).
+/// No mezclar en queries de ventas ni reportes financieros.
 model PetaloTx {
-  id             Int      @id @default(autoincrement())
-  usuarioId      Int
-  delta          Int
-  saldoResultante Int?
-  motivo         MotivoTx
-  descripcion    String?
-  metadata       Json?
+  id              Int      @id @default(autoincrement())
+  usuarioId       Int
+  delta           Int
+  /// Saldo resultante tras la transacción. Obligatorio para auditoría del saldo.
+  saldoResultante Int
+  motivo          MotivoTx
+  descripcion     String?
+  metadata        Json?
   /// Referencia polimórfica flexible para trazabilidad.
   /// TODO: `refTipo` + `refId` no garantizan integridad referencial fuerte; validarlo en backend si hace falta.
-  refTipo        String?
-  refId          Int?
-  creadoEn       DateTime @default(now())
+  refTipo         String?
+  refId           Int?
+  creadoEn        DateTime @default(now())
 
   usuario Usuario @relation(fields: [usuarioId], references: [id])
 

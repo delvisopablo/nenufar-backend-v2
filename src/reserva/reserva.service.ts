@@ -3,9 +3,11 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, ReservaEstado, RolGlobal } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { UpdateReservaEstadoDto } from './dto/update-reserva-estado.dto';
 
 type Horario = {
   weekly?: Record<string, [string, string][]>;
@@ -39,6 +41,61 @@ function dateFromYMDAndMinutes(ymd: string, mins: number) {
 export class ReservaService {
   constructor(private prisma: PrismaService) {}
 
+  private async assertCanManageNegocio(negocioId: number, actorUserId: number) {
+    if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
+      throw new UnauthorizedException('Autenticación requerida');
+    }
+
+    const [negocio, actor] = await this.prisma.$transaction([
+      this.prisma.negocio.findUnique({
+        where: { id: negocioId },
+        select: { id: true, duenoId: true },
+      }),
+      this.prisma.usuario.findUnique({
+        where: { id: actorUserId },
+        select: { id: true, rolGlobal: true },
+      }),
+    ]);
+
+    if (!negocio) throw new NotFoundException('Negocio no encontrado');
+    if (!actor) throw new UnauthorizedException('Usuario no autenticado');
+
+    if (negocio.duenoId === actorUserId) {
+      return negocio;
+    }
+
+    if (
+      actor.rolGlobal === RolGlobal.ADMIN ||
+      actor.rolGlobal === RolGlobal.MODERADOR
+    ) {
+      return negocio;
+    }
+
+    throw new ForbiddenException('No tienes permisos para gestionar este negocio');
+  }
+
+  private async ensureRecursoValido(negocioId: number, recursoId?: number) {
+    if (!Number.isInteger(recursoId) || !recursoId || recursoId <= 0) {
+      return null;
+    }
+
+    const recurso = await this.prisma.recursoReserva.findFirst({
+      where: {
+        id: recursoId,
+        negocioId,
+        eliminadoEn: null,
+        activo: true,
+      },
+      select: { id: true, nombre: true },
+    });
+
+    if (!recurso) {
+      throw new BadRequestException('Recurso no válido para este negocio');
+    }
+
+    return recurso;
+  }
+
   /** Devuelve los intervalos base (min..max) para un negocio en una fecha concreta */
   private getRangosParaFecha(horario: Horario | null, ymd: string) {
     if (!horario) return null;
@@ -53,12 +110,15 @@ export class ReservaService {
   }
 
   /** Genera slots de disponibilidad (hora de inicio) para un negocio y fecha */
-  async availability(negocioId: number, ymd: string) {
+  async availability(negocioId: number, ymd: string, recursoId?: number) {
     const negocio = await this.prisma.negocio.findUnique({
       where: { id: negocioId },
       select: { intervaloReserva: true, horario: true },
     });
     if (!negocio) throw new NotFoundException('Negocio no encontrado');
+
+    const recurso = await this.ensureRecursoValido(negocioId, recursoId);
+
     if (!negocio.intervaloReserva || negocio.intervaloReserva <= 0) {
       throw new BadRequestException(
         'El negocio no tiene intervalo de reserva configurado',
@@ -76,7 +136,11 @@ export class ReservaService {
     const dayStart = new Date(ymd + 'T00:00:00');
     const dayEnd = new Date(ymd + 'T23:59:59.999');
     const reservas = await this.prisma.reserva.findMany({
-      where: { negocioId, fecha: { gte: dayStart, lte: dayEnd } },
+      where: {
+        negocioId,
+        ...(recurso ? { recursoId: recurso.id } : {}),
+        fecha: { gte: dayStart, lte: dayEnd },
+      },
       select: { fecha: true },
     });
     const ocupadas = new Set(reservas.map((r) => r.fecha.getTime()));
@@ -103,6 +167,7 @@ export class ReservaService {
     return {
       date: ymd,
       intervalo: negocio.intervaloReserva,
+      recursoId: recurso?.id ?? null,
       slots,
     };
   }
@@ -113,6 +178,9 @@ export class ReservaService {
     userId: number,
     fechaISO: string,
     nota?: string,
+    recursoId?: number,
+    duracionMinutos?: number,
+    numPersonas?: number,
   ) {
     if (!fechaISO) throw new BadRequestException('Fecha requerida');
     const fecha = new Date(fechaISO);
@@ -121,7 +189,7 @@ export class ReservaService {
 
     // el slot debe existir en availability y no estar ocupado
     const ymd = fechaISO.slice(0, 10);
-    const avail = await this.availability(negocioId, ymd);
+    const avail = await this.availability(negocioId, ymd, recursoId);
     const ok = avail.slots.includes(fecha.toISOString());
     if (!ok) throw new BadRequestException('Slot no disponible');
 
@@ -131,7 +199,10 @@ export class ReservaService {
           negocioId,
           usuarioId: userId,
           fecha,
+          recursoId: avail.recursoId ?? null,
           nota: nota?.trim() || null,
+          duracionMinutos: duracionMinutos ?? null,
+          numPersonas: numPersonas ?? null,
         },
       });
     } catch (error) {
@@ -151,10 +222,57 @@ export class ReservaService {
       include: {
         negocio: { select: { id: true, nombre: true } },
         usuario: { select: { id: true, nombre: true } },
+        recurso: { select: { id: true, nombre: true, capacidad: true } },
       },
     });
     if (!r) throw new NotFoundException('Reserva no encontrada');
     return r;
+  }
+
+  async actualizarEstado(
+    id: number,
+    actorUserId: number,
+    dto: UpdateReservaEstadoDto,
+  ) {
+    const reserva = await this.prisma.reserva.findUnique({
+      where: { id },
+      select: { id: true, negocioId: true },
+    });
+    if (!reserva) throw new NotFoundException('Reserva no encontrada');
+
+    await this.assertCanManageNegocio(reserva.negocioId, actorUserId);
+
+    const allowedStates: ReservaEstado[] = [
+      ReservaEstado.CONFIRMADA,
+      ReservaEstado.CANCELADA,
+      ReservaEstado.COMPLETADA,
+      ReservaEstado.NO_SHOW,
+    ];
+
+    if (!allowedStates.includes(dto.estado)) {
+      throw new BadRequestException('Estado de reserva no permitido');
+    }
+
+    return this.prisma.reserva.update({
+      where: { id },
+      data: {
+        estado: dto.estado,
+        ...(dto.estado === ReservaEstado.CANCELADA
+          ? {
+              canceladaEn: new Date(),
+              motivoCancelacion: dto.motivoCancelacion?.trim() || null,
+            }
+          : {
+              canceladaEn: null,
+              motivoCancelacion: null,
+            }),
+      },
+      include: {
+        negocio: { select: { id: true, nombre: true } },
+        usuario: { select: { id: true, nombre: true, nickname: true } },
+        recurso: { select: { id: true, nombre: true, capacidad: true } },
+      },
+    });
   }
 
   async cancelar(id: number, userId: number, isAdmin = false) {
@@ -179,7 +297,10 @@ export class ReservaService {
     const [items, total] = await this.prisma.$transaction([
       this.prisma.reserva.findMany({
         where: { usuarioId: userId },
-        include: { negocio: { select: { id: true, nombre: true } } },
+        include: {
+          negocio: { select: { id: true, nombre: true } },
+          recurso: { select: { id: true, nombre: true, capacidad: true } },
+        },
         orderBy: { fecha: 'asc' },
         skip,
         take: l,

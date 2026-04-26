@@ -73,8 +73,12 @@ describe('Auth E2E', () => {
 
     expect(response.body).toEqual(
       expect.objectContaining({
-        statusCode: 409,
-        message: 'Email o nickname ya en uso',
+        ok: false,
+        error: expect.objectContaining({
+          code: 'CONFLICT',
+          message: 'Email o nickname ya en uso',
+          requestId: expect.any(String),
+        }),
       }),
     );
   });
@@ -92,8 +96,17 @@ describe('Auth E2E', () => {
 
     expect(response.body).toEqual(
       expect.objectContaining({
-        statusCode: 400,
-        message: expect.arrayContaining([expect.stringContaining('password')]),
+        ok: false,
+        error: expect.objectContaining({
+          code: 'VALIDATION_ERROR',
+          message: 'Datos de entrada inválidos',
+          requestId: expect.any(String),
+          details: expect.objectContaining({
+            fields: expect.objectContaining({
+              password: expect.any(Array),
+            }),
+          }),
+        }),
       }),
     );
   });
@@ -143,8 +156,12 @@ describe('Auth E2E', () => {
 
     expect(response.body).toEqual(
       expect.objectContaining({
-        statusCode: 401,
-        message: 'Credenciales inválidas',
+        ok: false,
+        error: expect.objectContaining({
+          code: 'AUTH_ERROR',
+          message: 'Credenciales inválidas',
+          requestId: expect.any(String),
+        }),
       }),
     );
   });
@@ -160,8 +177,12 @@ describe('Auth E2E', () => {
 
     expect(response.body).toEqual(
       expect.objectContaining({
-        statusCode: 401,
-        message: 'Credenciales inválidas',
+        ok: false,
+        error: expect.objectContaining({
+          code: 'AUTH_ERROR',
+          message: 'Credenciales inválidas',
+          requestId: expect.any(String),
+        }),
       }),
     );
   });
@@ -194,8 +215,12 @@ describe('Auth E2E', () => {
 
     expect(response.body).toEqual(
       expect.objectContaining({
-        statusCode: 401,
-        message: 'Unauthorized',
+        ok: false,
+        error: expect.objectContaining({
+          code: 'AUTH_ERROR',
+          message: 'Unauthorized',
+          requestId: expect.any(String),
+        }),
       }),
     );
   });

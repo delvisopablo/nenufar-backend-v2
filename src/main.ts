@@ -1,11 +1,15 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
-import cookieParser from 'cookie-parser';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { setupApp } from './app.setup';
+import { registerProcessErrorHandlers } from './common/process/process-error-handlers';
+
+registerProcessErrorHandlers();
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  setupApp(app);
+
   const allowedOrigins = [
     'https://www.minenufar.com',
     'https://minenufar.com',
@@ -19,13 +23,10 @@ async function bootstrap() {
     ...new Set([...allowedOrigins, ...(extraOrigins ?? [])]),
   ];
 
-  app.use(cookieParser());
   app.enableCors({
     origin: corsOrigins,
     credentials: true,
   });
-
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 
   const cfg = new DocumentBuilder()
     .setTitle('Nenúfar API')

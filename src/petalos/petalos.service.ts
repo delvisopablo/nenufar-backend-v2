@@ -51,12 +51,20 @@ export class PetalosService {
     if (!delta || Number.isNaN(delta))
       throw new BadRequestException('Delta inválido');
     return this.prisma.$transaction(async (tx) => {
-      await tx.petaloTx.create({
-        data: { usuarioId, delta, motivo, refTipo, refId },
-      });
-      await tx.usuario.update({
+      const updatedUser = await tx.usuario.update({
         where: { id: usuarioId },
         data: { petalosSaldo: { increment: delta } },
+        select: { petalosSaldo: true },
+      });
+      await tx.petaloTx.create({
+        data: {
+          usuarioId,
+          delta,
+          saldoResultante: updatedUser.petalosSaldo,
+          motivo,
+          refTipo,
+          refId,
+        },
       });
       return { ok: true };
     });

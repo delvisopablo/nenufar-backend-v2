@@ -357,7 +357,7 @@ _Base path_: `/api/v1`  · Auth via Bearer JWT  · Paginación: `?page=1&limit=2
 - `GET /health` → estado del servicio
 
 ## 1) Auth
-- `POST /auth/register` → {nombre, nickname, email, password}
+- `POST /auth/registro` → {nombre, nickname, email, password}
 - `POST /auth/login` → {email, password}
 - `POST /auth/refresh` → refresh token
 - `POST /auth/logout`

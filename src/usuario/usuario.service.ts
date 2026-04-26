@@ -1,5 +1,5 @@
-// src/usuario/usuario.service.ts
 import { Injectable, ConflictException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateUsuarioDto } from './dto/create-usuario.dto';
 import * as bcrypt from 'bcrypt';
@@ -11,36 +11,52 @@ export class UsuarioService {
   constructor(private prisma: PrismaService) {}
 
   async crearUsuario(dto: CreateUsuarioDto) {
-    const existe = await this.prisma.usuario.findUnique({
-      where: { email: dto.email },
+    const normalizedEmail = dto.email.trim().toLowerCase();
+    const normalizedNickname = dto.nickname.trim();
+
+    const existe = await this.prisma.usuario.findFirst({
+      where: {
+        OR: [{ email: normalizedEmail }, { nickname: normalizedNickname }],
+      },
+      select: { id: true, email: true, nickname: true },
     });
 
     if (existe) {
-      throw new ConflictException('El email ya está en uso');
+      throw new ConflictException('El email o nickname ya está en uso');
     }
 
     const hash = await bcrypt.hash(dto.password, 10);
 
-    const usuario = await this.prisma.usuario.create({
-      data: {
-        nombre: dto.nombre,
-        nickname: dto.nickname,
-        email: dto.email,
-        password: hash,
-        foto: dto.fotoPerfil,
-        biografia: dto.biografia,
-      },
-      select: {
-        id: true,
-        nombre: true,
-        nickname: true,
-        email: true,
-        foto: true,
-        biografia: true,
-      },
-    });
+    try {
+      const usuario = await this.prisma.usuario.create({
+        data: {
+          nombre: dto.nombre.trim(),
+          nickname: normalizedNickname,
+          email: normalizedEmail,
+          password: hash,
+          foto: dto.fotoPerfil?.trim() || undefined,
+          biografia: dto.biografia?.trim() || undefined,
+        },
+        select: {
+          id: true,
+          nombre: true,
+          nickname: true,
+          email: true,
+          foto: true,
+          biografia: true,
+        },
+      });
 
-    return usuario;
+      return usuario;
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('El email o nickname ya está en uso');
+      }
+      throw error;
+    }
   }
 
   async getPerfil(id: number) {

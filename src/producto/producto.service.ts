@@ -16,6 +16,12 @@ function toPaging(page?: number | string, limit?: number | string) {
   return { skip: (p - 1) * l, take: l, page: p, limit: l };
 }
 
+function trimOptionalString(value?: string | null) {
+  if (value === undefined) return undefined;
+  const normalized = value?.trim();
+  return normalized || null;
+}
+
 @Injectable()
 export class ProductoService {
   constructor(private prisma: PrismaService) {}
@@ -70,13 +76,31 @@ export class ProductoService {
     if (!isAdmin && nego.duenoId !== currentUserId)
       throw new ForbiddenException('No eres el dueño');
 
+    const stockDisponible = dto.stockDisponible ?? 0;
+    const stockReservado = dto.stockReservado ?? 0;
+    if (stockDisponible < 0 || stockReservado < 0) {
+      throw new BadRequestException('Los valores de stock no pueden ser negativos');
+    }
+    if (stockReservado > stockDisponible) {
+      throw new BadRequestException(
+        'stockReservado no puede superar stockDisponible',
+      );
+    }
+
     try {
       return await this.prisma.producto.create({
         data: {
           negocioId,
           nombre: dto.nombre.trim(),
-          descripcion: dto.descripcion?.trim(),
+          ...(dto.descripcion !== undefined
+            ? { descripcion: trimOptionalString(dto.descripcion) }
+            : {}),
           precio: dto.precio,
+          ...(dto.codigoSKU !== undefined
+            ? { codigoSKU: trimOptionalString(dto.codigoSKU) }
+            : {}),
+          stockDisponible,
+          stockReservado,
         },
       });
     } catch {
@@ -93,11 +117,26 @@ export class ProductoService {
   ) {
     const prod = await this.prisma.producto.findUnique({
       where: { id },
-      include: { negocio: { select: { duenoId: true } } },
+      select: {
+        stockDisponible: true,
+        stockReservado: true,
+        negocio: { select: { duenoId: true } },
+      },
     });
     if (!prod) throw new NotFoundException('Producto no encontrado');
     if (!isAdmin && prod.negocio.duenoId !== currentUserId)
       throw new ForbiddenException('No eres el dueño');
+
+    const nextStockDisponible = dto.stockDisponible ?? prod.stockDisponible;
+    const nextStockReservado = dto.stockReservado ?? prod.stockReservado;
+    if (nextStockDisponible < 0 || nextStockReservado < 0) {
+      throw new BadRequestException('Los valores de stock no pueden ser negativos');
+    }
+    if (nextStockReservado > nextStockDisponible) {
+      throw new BadRequestException(
+        'stockReservado no puede superar stockDisponible',
+      );
+    }
 
     try {
       return await this.prisma.producto.update({
@@ -105,9 +144,18 @@ export class ProductoService {
         data: {
           ...(dto.nombre ? { nombre: dto.nombre.trim() } : {}),
           ...(dto.descripcion !== undefined
-            ? { descripcion: dto.descripcion?.trim() ?? null }
+            ? { descripcion: trimOptionalString(dto.descripcion) }
             : {}),
           ...(dto.precio !== undefined ? { precio: dto.precio } : {}),
+          ...(dto.codigoSKU !== undefined
+            ? { codigoSKU: trimOptionalString(dto.codigoSKU) }
+            : {}),
+          ...(dto.stockDisponible !== undefined
+            ? { stockDisponible: dto.stockDisponible }
+            : {}),
+          ...(dto.stockReservado !== undefined
+            ? { stockReservado: dto.stockReservado }
+            : {}),
         },
       });
     } catch {

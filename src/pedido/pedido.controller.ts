@@ -9,6 +9,7 @@ import {
   Post,
   Query,
   Req,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { PedidoService } from './pedido.service';
 import { AddItemDto } from './dto/add-item.dto';
@@ -16,15 +17,41 @@ import { UpdateItemDto } from './dto/update-item.dto';
 import { UpdatePedidoDto } from './dto/update-pedido.dto';
 import { CreateCompraDto } from './dto/create-compra.dto';
 import { CreatePagoDto } from './dto/create-pago.dto';
+import { QueryNegocioPedidosDto } from './dto/query-negocio-pedidos.dto';
+import { UpdatePagoEstadoDto } from './dto/update-pago-estado.dto';
 
 @Controller()
 export class PedidoController {
   constructor(private service: PedidoService) {}
 
+  private getAuthenticatedUserId(req: { user?: { id?: number } }) {
+    const userId = Number(req.user?.id);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      throw new UnauthorizedException('Autenticación requerida');
+    }
+    return userId;
+  }
+
   // ---- Pedidos ----
   @Post('negocios/:negocioId/pedidos')
-  createPedido(@Param('negocioId', ParseIntPipe) negocioId: number) {
-    return this.service.createPedido(negocioId);
+  createPedido(
+    @Param('negocioId', ParseIntPipe) negocioId: number,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.createPedido(negocioId, req.user?.id);
+  }
+
+  @Get('negocios/:negocioId/pedidos')
+  listPedidosNegocio(
+    @Param('negocioId', ParseIntPipe) negocioId: number,
+    @Query() query: QueryNegocioPedidosDto,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.listByNegocio(
+      negocioId,
+      this.getAuthenticatedUserId(req),
+      query,
+    );
   }
 
   @Get('pedidos/:id')
@@ -70,11 +97,11 @@ export class PedidoController {
   @Post('pedidos/:id/compras')
   createCompra(
     @Param('id', ParseIntPipe) pedidoId: number,
-    @Body() _dto: CreateCompraDto,
+    @Body() dto: CreateCompraDto,
     @Req() req: { user?: { id?: number } },
   ) {
     const userId = req.user?.id ?? 1; // TODO: JwtAuthGuard
-    return this.service.createCompra(pedidoId, userId, _dto);
+    return this.service.createCompra(pedidoId, userId, dto);
   }
 
   @Get('compras/:id')
@@ -99,6 +126,14 @@ export class PedidoController {
     @Body() dto: CreatePagoDto,
   ) {
     return this.service.createPago(compraId, dto);
+  }
+
+  @Patch('pagos/:id/estado')
+  updatePagoEstado(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePagoEstadoDto,
+  ) {
+    return this.service.updatePagoEstado(id, dto);
   }
 
   @Get('pagos/:id')

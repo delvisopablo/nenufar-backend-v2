@@ -12,6 +12,7 @@ import {
 import { PromocionService } from './promocion.service';
 import { CreatePromocionDto } from './dto/create-promocion.dto';
 import { UpdatePromocionDto } from './dto/update-promocion.dto';
+import { ValidarPromocionDto } from './dto/validar-promocion.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 // import { AuthGuard } from '../auth/auth.guard';
 
@@ -23,10 +24,16 @@ export class PromocionController {
     private prisma: PrismaService,
   ) {}
 
+  private getRequestUserId(req: {
+    user?: { id?: number };
+    usuario?: { id?: number };
+  }) {
+    return req.user?.id ?? req.usuario?.id ?? 1;
+  }
+
   @Post()
   crear(@Body() dto: CreatePromocionDto, @Request() req) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access
-    return this.promocionService.crearPromocion(dto, req.usuario.id);
+    return this.promocionService.crearPromocion(dto, this.getRequestUserId(req));
   }
 
   @Get()
@@ -84,19 +91,32 @@ export class PromocionController {
   //   return this.promocionService.listarPorNegocio(id);
   // }
 
+  @Post(':id/validar')
+  validar(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ValidarPromocionDto,
+  ) {
+    return this.promocionService.validarPromocion(id, dto);
+  }
+
   @Patch(':id')
   actualizar(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdatePromocionDto,
     @Request() req,
   ) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access
-    return this.promocionService.actualizarPromocion(id, dto, req.usuario.id);
+    return this.promocionService.actualizarPromocion(
+      id,
+      dto,
+      this.getRequestUserId(req),
+    );
   }
 
   @Delete(':id')
   borrar(@Param('id', ParseIntPipe) id: number, @Request() req) {
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-member-access
-    return this.promocionService.borrarPromocion(id, req.usuario.id);
+    return this.promocionService.borrarPromocion(
+      id,
+      this.getRequestUserId(req),
+    );
   }
 }

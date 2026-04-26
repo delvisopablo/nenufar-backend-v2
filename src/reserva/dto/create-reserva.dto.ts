@@ -1,4 +1,4 @@
-import { IsDateString, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsDateString, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 export class CreateReservaDto {
   @IsDateString()
@@ -8,4 +8,19 @@ export class CreateReservaDto {
   @IsOptional()
   @MaxLength(500)
   nota?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  recursoId?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  duracionMinutos?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  numPersonas?: number;
 }
