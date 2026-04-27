@@ -86,6 +86,13 @@ export function mapDatabaseError(error: unknown): AppError | null {
           500,
           details,
         );
+      case 'P2025':
+        return new AppError(
+          'NOT_FOUND',
+          'Registro no encontrado',
+          404,
+          details,
+        );
       default:
         return null;
     }

@@ -165,6 +165,11 @@ export class LogroService {
   }
 
   async remove(id: number) {
+    const logro = await this.prisma.logro.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!logro) throw new NotFoundException('Logro no encontrado');
     return this.prisma.logro.delete({ where: { id } });
   }
 }

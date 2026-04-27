@@ -151,42 +151,27 @@ export class NegocioService {
 
   // DETAIL
   async getById(id: number) {
-    let n: any = null;
-
-    try {
-      n = await this.prisma.negocio.findUnique({
-        where: { id },
-        select: {
-          id: true,
-          nombre: true,
-          historia: true,
-          direccion: true,
-          categoria: { select: { id: true, nombre: true } },
-          duenoId: true,
-          dueno: {
-            select: {
-              id: true,
-              nombre: true,
-              nickname: true,
-              foto: true,
-            },
+    const n = await this.prisma.negocio.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        nombre: true,
+        historia: true,
+        direccion: true,
+        categoria: { select: { id: true, nombre: true } },
+        duenoId: true,
+        dueno: {
+          select: {
+            id: true,
+            nombre: true,
+            nickname: true,
+            foto: true,
           },
-          horario: true,
-          intervaloReserva: true,
         },
-      });
-    } catch {
-      n = await this.prisma.negocio.findUnique({
-        where: { id },
-        select: {
-          id: true,
-          nombre: true,
-          historia: true,
-          direccion: true,
-          categoria: { select: { id: true, nombre: true } },
-        },
-      });
-    }
+        horario: true,
+        intervaloReserva: true,
+      },
+    });
 
     if (!n) throw new NotFoundException('Negocio no encontrado');
     return n;
@@ -208,24 +193,17 @@ export class NegocioService {
       horario: dto.horario ?? undefined,
     };
 
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        const negocio = await tx.negocio.create({ data });
-        await tx.negocioMiembro.create({
-          data: {
-            negocioId: negocio.id,
-            usuarioId: currentUserId,
-            rol: RolNegocio.DUENO,
-          },
-        });
-        return negocio;
+    return this.prisma.$transaction(async (tx) => {
+      const negocio = await tx.negocio.create({ data });
+      await tx.negocioMiembro.create({
+        data: {
+          negocioId: negocio.id,
+          usuarioId: currentUserId,
+          rol: RolNegocio.DUENO,
+        },
       });
-    } catch {
-      // P2003 FK inválida, P2002 unique (si pones unique en nombre)
-      throw new BadRequestException(
-        'Datos inválidos o referencias inexistentes',
-      );
-    }
+      return negocio;
+    });
   }
 
   // UPDATE
@@ -268,11 +246,7 @@ export class NegocioService {
       ...(dto.horario !== undefined ? { horario: dto.horario } : {}),
     };
 
-    try {
-      return await this.prisma.negocio.update({ where: { id }, data });
-    } catch {
-      throw new BadRequestException('Actualización inválida');
-    }
+    return this.prisma.negocio.update({ where: { id }, data });
   }
 
   // DELETE
@@ -285,14 +259,7 @@ export class NegocioService {
     if (!isAdmin && n.duenoId !== currentUserId)
       throw new ForbiddenException('No eres el dueño');
 
-    try {
-      return await this.prisma.negocio.delete({ where: { id } });
-    } catch {
-      // P2003: dependencias (productos, reseñas, etc.)
-      throw new BadRequestException(
-        'No se puede eliminar: tiene datos vinculados',
-      );
-    }
+    return this.prisma.negocio.delete({ where: { id } });
   }
 
   // CONFIG HORARIO
@@ -477,18 +444,15 @@ export class NegocioService {
       throw new BadRequestException('No puedes eliminar al dueño del negocio');
     }
 
-    try {
-      await this.prisma.negocioMiembro.delete({
-        where: {
-          negocioId_usuarioId: {
-            negocioId,
-            usuarioId,
-          },
-        },
-      });
-    } catch {
-      throw new NotFoundException('Miembro no encontrado');
-    }
+    const miembro = await this.prisma.negocioMiembro.findUnique({
+      where: { negocioId_usuarioId: { negocioId, usuarioId } },
+      select: { usuarioId: true },
+    });
+    if (!miembro) throw new NotFoundException('Miembro no encontrado');
+
+    await this.prisma.negocioMiembro.delete({
+      where: { negocioId_usuarioId: { negocioId, usuarioId } },
+    });
 
     return { ok: true };
   }

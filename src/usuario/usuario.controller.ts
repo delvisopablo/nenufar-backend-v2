@@ -90,7 +90,14 @@ export class UsuarioController {
   }
 
   @Delete(':id')
-  async borrarUsuario(@Param('id', ParseIntPipe) id: number) {
+  async borrarUsuario(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    const actorId = this.getAuthenticatedUserId(req);
+    if (actorId !== id) {
+      throw new UnauthorizedException('Solo puedes borrar tu propia cuenta');
+    }
     return this.usuarioService.borrarUsuario(id);
   }
 }

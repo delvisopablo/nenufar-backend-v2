@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AppController } from './app.controller';
-import { AppService } from './app.service';
 import { PromocionService } from './promocion/promocion.service';
 import { ResenaService } from './reseña/resena.service';
 
@@ -11,14 +10,13 @@ describe('AppController', () => {
     const app: TestingModule = await Test.createTestingModule({
       controllers: [AppController],
       providers: [
-        AppService,
         {
           provide: ResenaService,
           useValue: { todasLasResenas: jest.fn().mockResolvedValue([]) },
         },
         {
           provide: PromocionService,
-          useValue: { getPromos: jest.fn().mockReturnValue([]) },
+          useValue: { listarActivas: jest.fn().mockResolvedValue([]) },
         },
       ],
     }).compile();
@@ -26,9 +24,12 @@ describe('AppController', () => {
     appController = app.get<AppController>(AppController);
   });
 
-  describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+  describe('inicio', () => {
+    it('should return welcome data', async () => {
+      const result = await appController.inicio();
+      expect(result).toHaveProperty('bienvenida');
+      expect(result).toHaveProperty('resenas');
+      expect(result).toHaveProperty('promos');
     });
   });
 });

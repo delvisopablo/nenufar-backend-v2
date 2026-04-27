@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { MotivoTx } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -18,6 +18,7 @@ export class PetalosService {
       where: { id: userId },
       select: { id: true, nombre: true, petalosSaldo: true },
     });
+    if (!u) throw new NotFoundException('Usuario no encontrado');
     return u;
   }
 

@@ -36,10 +36,6 @@ export class PromocionController {
     return this.promocionService.crearPromocion(dto, this.getRequestUserId(req));
   }
 
-  @Get()
-  getPromos() {
-    return this.promocionService.getPromos();
-  }
   // @Get('promociones/activas')
   // findActivas() {
   //   return this.prisma.promocion.findMany({

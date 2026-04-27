@@ -100,8 +100,7 @@ export class PedidoController {
     @Body() dto: CreateCompraDto,
     @Req() req: { user?: { id?: number } },
   ) {
-    const userId = req.user?.id ?? 1; // TODO: JwtAuthGuard
-    return this.service.createCompra(pedidoId, userId, dto);
+    return this.service.createCompra(pedidoId, this.getAuthenticatedUserId(req), dto);
   }
 
   @Get('compras/:id')
@@ -115,8 +114,7 @@ export class PedidoController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    const userId = req.user?.id ?? 1;
-    return this.service.listComprasUsuario(userId, page, limit);
+    return this.service.listComprasUsuario(this.getAuthenticatedUserId(req), page, limit);
   }
 
   // ---- Pagos ----
@@ -147,7 +145,6 @@ export class PedidoController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    const userId = req.user?.id ?? 1;
-    return this.service.listPagosUsuario(userId, page, limit);
+    return this.service.listPagosUsuario(this.getAuthenticatedUserId(req), page, limit);
   }
 }

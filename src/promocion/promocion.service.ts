@@ -104,12 +104,23 @@ export class PromocionService {
     });
   }
 
-  getPromos() {
-    return [
-      { id: 1, titulo: '2x1 en Cañas', negocio: 'Bar Pepe' },
-      { id: 2, titulo: 'Descuento del 10%', negocio: 'Tienda María' },
-      { id: 3, titulo: 'Promo Especial Sábado', negocio: 'Café Sol' },
-    ];
+  async listarActivas() {
+    return this.prisma.promocion.findMany({
+      where: {
+        activa: true,
+        fechaCaducidad: { gte: new Date() },
+      },
+      select: {
+        id: true,
+        titulo: true,
+        descuento: true,
+        tipoDescuento: true,
+        fechaCaducidad: true,
+        negocio: { select: { id: true, nombre: true } },
+      },
+      orderBy: { fechaCaducidad: 'asc' },
+      take: 10,
+    });
   }
 
   async listarPorNegocio(negocioId: number) {

@@ -114,25 +114,21 @@ export class ProductoService {
       );
     }
 
-    try {
-      return await this.prisma.producto.create({
-        data: {
-          negocioId,
-          nombre: dto.nombre.trim(),
-          ...(dto.descripcion !== undefined
-            ? { descripcion: trimOptionalString(dto.descripcion) }
-            : {}),
-          precio: dto.precio,
-          ...(dto.codigoSKU !== undefined
-            ? { codigoSKU: trimOptionalString(dto.codigoSKU) }
-            : {}),
-          stockDisponible,
-          stockReservado,
-        },
-      });
-    } catch {
-      throw new BadRequestException('No se pudo crear el producto');
-    }
+    return this.prisma.producto.create({
+      data: {
+        negocioId,
+        nombre: dto.nombre.trim(),
+        ...(dto.descripcion !== undefined
+          ? { descripcion: trimOptionalString(dto.descripcion) }
+          : {}),
+        precio: dto.precio,
+        ...(dto.codigoSKU !== undefined
+          ? { codigoSKU: trimOptionalString(dto.codigoSKU) }
+          : {}),
+        stockDisponible,
+        stockReservado,
+      },
+    });
   }
 
   /** Actualiza producto (solo dueño del negocio o admin) */
@@ -164,29 +160,25 @@ export class ProductoService {
       );
     }
 
-    try {
-      return await this.prisma.producto.update({
-        where: { id },
-        data: {
-          ...(dto.nombre ? { nombre: dto.nombre.trim() } : {}),
-          ...(dto.descripcion !== undefined
-            ? { descripcion: trimOptionalString(dto.descripcion) }
-            : {}),
-          ...(dto.precio !== undefined ? { precio: dto.precio } : {}),
-          ...(dto.codigoSKU !== undefined
-            ? { codigoSKU: trimOptionalString(dto.codigoSKU) }
-            : {}),
-          ...(dto.stockDisponible !== undefined
-            ? { stockDisponible: dto.stockDisponible }
-            : {}),
-          ...(dto.stockReservado !== undefined
-            ? { stockReservado: dto.stockReservado }
-            : {}),
-        },
-      });
-    } catch {
-      throw new BadRequestException('No se pudo actualizar el producto');
-    }
+    return this.prisma.producto.update({
+      where: { id },
+      data: {
+        ...(dto.nombre ? { nombre: dto.nombre.trim() } : {}),
+        ...(dto.descripcion !== undefined
+          ? { descripcion: trimOptionalString(dto.descripcion) }
+          : {}),
+        ...(dto.precio !== undefined ? { precio: dto.precio } : {}),
+        ...(dto.codigoSKU !== undefined
+          ? { codigoSKU: trimOptionalString(dto.codigoSKU) }
+          : {}),
+        ...(dto.stockDisponible !== undefined
+          ? { stockDisponible: dto.stockDisponible }
+          : {}),
+        ...(dto.stockReservado !== undefined
+          ? { stockReservado: dto.stockReservado }
+          : {}),
+      },
+    });
   }
 
   /** Elimina producto (solo dueño o admin). Bloqueará si hay líneas de pedido. */
@@ -198,13 +190,7 @@ export class ProductoService {
     if (!prod) throw new NotFoundException('Producto no encontrado');
     await this.assertCanManageNegocio(prod.negocioId, currentUserId, isAdmin);
 
-    try {
-      return await this.prisma.producto.delete({ where: { id } });
-    } catch {
-      throw new BadRequestException(
-        'No se puede eliminar: puede tener pedidos/promos vinculados',
-      );
-    }
+    return this.prisma.producto.delete({ where: { id } });
   }
 
   async adjustStock(

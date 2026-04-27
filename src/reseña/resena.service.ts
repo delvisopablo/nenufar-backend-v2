@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -192,22 +191,16 @@ export class ResenaService {
     if (r.usuarioId !== userId)
       throw new ForbiddenException('No puedes editar esta reseña');
 
-    try {
-      return await this.prisma.resena.update({
-        where: { id },
-        data: {
-          ...(dto.puntuacion !== undefined
-            ? { puntuacion: dto.puntuacion }
-            : {}),
-          ...(dto.contenido !== undefined ? { contenido: dto.contenido } : {}),
-          ...(dto.selloNenufar !== undefined
-            ? { selloNenufar: dto.selloNenufar }
-            : {}),
-        },
-      });
-    } catch {
-      throw new BadRequestException('Actualización inválida');
-    }
+    return this.prisma.resena.update({
+      where: { id },
+      data: {
+        ...(dto.puntuacion !== undefined ? { puntuacion: dto.puntuacion } : {}),
+        ...(dto.contenido !== undefined ? { contenido: dto.contenido } : {}),
+        ...(dto.selloNenufar !== undefined
+          ? { selloNenufar: dto.selloNenufar }
+          : {}),
+      },
+    });
   }
 
   /** Eliminar reseña (solo autor). No revertimos pétalos. */

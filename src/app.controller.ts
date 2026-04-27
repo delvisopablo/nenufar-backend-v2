@@ -11,8 +11,10 @@ export class AppController {
 
   @Get()
   async inicio() {
-    const resenas = await this.resenaService.todasLasResenas();
-    const promos = this.promocionService.getPromos();
+    const [resenas, promos] = await Promise.all([
+      this.resenaService.todasLasResenas(),
+      this.promocionService.listarActivas(),
+    ]);
     return {
       bienvenida: '¡Bienvenido a Nenúfar!',
       resenas,
