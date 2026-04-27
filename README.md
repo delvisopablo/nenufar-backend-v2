@@ -65,7 +65,7 @@ Scripts típicos en `package.json` (ajusta si es necesario):
 ```json
 {
   "scripts": {
-    "start": "node dist/main.js",
+    "start": "node dist/src/main.js",
     "start:dev": "nest start --watch",
     "build": "nest build",
     "prisma:generate": "prisma generate",
@@ -111,7 +111,7 @@ Scripts típicos en `package.json` (ajusta si es necesario):
 5. **Start Command**:
 
    ```bash
-   node dist/main.js
+   node dist/src/main.js
    ```
 6. **Environment variables** en Render → *Environment*:
 
@@ -142,7 +142,7 @@ services:
       npm run build
       npx prisma generate
       npx prisma migrate deploy
-    startCommand: node dist/main.js
+    startCommand: node dist/src/main.js
     envVars:
       - key: NODE_ENV
         value: production
@@ -196,7 +196,7 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/dist ./dist
 COPY prisma ./prisma
 ENV NODE_ENV=production
-CMD ["node", "dist/main.js"]
+CMD ["node", "dist/src/main.js"]
 ```
 
 ---
@@ -214,6 +214,4 @@ CMD ["node", "dist/main.js"]
 
 ---
 
-## 📜 Licencia
 
-MIT (o la que decidas).

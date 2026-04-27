@@ -6,8 +6,11 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
+import { StructuredLogger } from '../common/logger/structured-logger';
+import { RequestWithContext } from '../common/middleware/request-context.middleware';
 
-type AuthenticatedRequest = Request & {
+type AuthenticatedRequest = RequestWithContext &
+  Request & {
   user?: {
     id: number;
     sub: number;
@@ -44,7 +47,12 @@ export class AuthGuard implements CanActivate {
       request.usuario = { id: payload.sub, email: payload.email };
       return true;
     } catch (err: any) {
-      console.error('Error al verificar token:', err?.message);
+      StructuredLogger.warn('invalid_access_token', {
+        requestId: request.requestId,
+        method: request.method,
+        path: request.originalUrl ?? request.url,
+        reason: err?.message,
+      });
       throw new UnauthorizedException('Token inválido');
     }
   }
