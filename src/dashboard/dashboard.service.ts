@@ -53,7 +53,7 @@ export class DashboardService {
       throw new UnauthorizedException('Autenticación requerida');
     }
 
-    const [negocio, actor] = await this.prisma.$transaction([
+    const [negocio, actor, miembro] = await this.prisma.$transaction([
       this.prisma.negocio.findUnique({
         where: { id: negocioId },
         select: { id: true, duenoId: true, nombre: true },
@@ -62,6 +62,15 @@ export class DashboardService {
         where: { id: actorUserId },
         select: { id: true, rolGlobal: true },
       }),
+      this.prisma.negocioMiembro.findUnique({
+        where: {
+          negocioId_usuarioId: {
+            negocioId,
+            usuarioId: actorUserId,
+          },
+        },
+        select: { usuarioId: true },
+      }),
     ]);
 
     if (!negocio) throw new NotFoundException('Negocio no encontrado');
@@ -69,6 +78,7 @@ export class DashboardService {
 
     if (
       negocio.duenoId !== actorUserId &&
+      !miembro &&
       actor.rolGlobal !== RolGlobal.ADMIN &&
       actor.rolGlobal !== RolGlobal.MODERADOR
     ) {
@@ -558,6 +568,125 @@ export class DashboardService {
       topCompradores: Array.from(topCompradoresMap.values())
         .sort((a, b) => b.totalGastado - a.totalGastado)
         .slice(0, 10),
+    };
+  }
+
+  async getConversion(
+    negocioId: number,
+    actorUserId: number,
+    query: DashboardRangeDto,
+  ) {
+    await this.assertCanManageNegocio(negocioId, actorUserId);
+    const period = this.resolvePeriod(query);
+
+    const [visitasTotal, comprasTotal, reservasTotal, visitasPorOrigen] =
+      await this.prisma.$transaction([
+        this.prisma.visitaNegocio.count({
+          where: {
+            negocioId,
+            creadoEn: this.periodWhere(period),
+          },
+        }),
+        this.prisma.compra.count({
+          where: {
+            negocioId,
+            estado: CompraEstado.COMPLETADA,
+            creadoEn: this.periodWhere(period),
+          },
+        }),
+        this.prisma.reserva.count({
+          where: {
+            negocioId,
+            creadoEn: this.periodWhere(period),
+          },
+        }),
+        this.prisma.visitaNegocio.groupBy({
+          by: ['origen'],
+          orderBy: { origen: 'asc' },
+          where: {
+            negocioId,
+            creadoEn: this.periodWhere(period),
+          },
+          _count: { _all: true },
+        }),
+      ]);
+
+    return {
+      periodo: {
+        from: period.from.toISOString(),
+        to: period.to.toISOString(),
+        days: period.days,
+      },
+      resumen: {
+        visitasTotal,
+        comprasTotal,
+        reservasTotal,
+        tasaCompra: visitasTotal > 0 ? comprasTotal / visitasTotal : 0,
+        tasaReserva: visitasTotal > 0 ? reservasTotal / visitasTotal : 0,
+      },
+      visitasPorOrigen: visitasPorOrigen
+        .map((item) => ({
+          origen: item.origen ?? 'sin_origen',
+          total: groupCount(item._count),
+        }))
+        .sort((a, b) => b.total - a.total),
+    };
+  }
+
+  async getCategorias(
+    negocioId: number,
+    actorUserId: number,
+    query: DashboardRangeDto,
+  ) {
+    await this.assertCanManageNegocio(negocioId, actorUserId);
+    const period = this.resolvePeriod(query);
+
+    const groups = await this.prisma.pedidoProducto.groupBy({
+      by: ['categoriaIdSnapshot'],
+      where: {
+        pedido: {
+          negocioId,
+          creadoEn: this.periodWhere(period),
+        },
+      },
+      _count: { id: true },
+      _sum: {
+        cantidad: true,
+        subtotal: true,
+      },
+    });
+
+    const categoriaIds = groups
+      .map((item) => item.categoriaIdSnapshot)
+      .filter((value): value is number => typeof value === 'number');
+
+    const categorias = categoriaIds.length
+      ? await this.prisma.categoria.findMany({
+          where: { id: { in: categoriaIds } },
+          select: { id: true, nombre: true },
+        })
+      : [];
+
+    const nombres = new Map(categorias.map((item) => [item.id, item.nombre]));
+
+    return {
+      periodo: {
+        from: period.from.toISOString(),
+        to: period.to.toISOString(),
+        days: period.days,
+      },
+      items: groups
+        .map((item) => ({
+          categoriaId: item.categoriaIdSnapshot,
+          categoriaNombre:
+            (item.categoriaIdSnapshot
+              ? nombres.get(item.categoriaIdSnapshot)
+              : null) ?? 'Sin categoría snapshot',
+          lineasVendidas: groupCount(item._count),
+          unidadesVendidas: item._sum.cantidad ?? 0,
+          ingresos: decimalToNumber(item._sum.subtotal),
+        }))
+        .sort((a, b) => b.ingresos - a.ingresos),
     };
   }
 }

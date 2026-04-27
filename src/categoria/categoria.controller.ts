@@ -36,6 +36,11 @@ export class CategoriaController {
     });
   }
 
+  @Get(':id/subcategorias')
+  listSubcategorias(@Param('id', ParseIntPipe) id: number) {
+    return this.service.listSubcategorias(id);
+  }
+
   @Get(':id')
   get(
     @Param('id', ParseIntPipe) id: number,

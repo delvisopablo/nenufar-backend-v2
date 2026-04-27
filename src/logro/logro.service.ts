@@ -6,7 +6,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateLogroDto } from './dto/create-logro.dto';
-// import { UpdateLogroDto } from './dto/update-logro.dto';
+import { UpdateLogroDto } from './dto/update-logro.dto';
 
 @Injectable()
 export class LogroService {
@@ -116,22 +116,53 @@ export class LogroService {
     return logro;
   }
 
-  // async update(id: number, dto: UpdateLogroDto) {
-  //   const { categoriaId, subcategoriaId, negocioId, productoId, ...rest } = dto;
+  async update(id: number, dto: UpdateLogroDto) {
+    const logro = await this.prisma.logro.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!logro) throw new NotFoundException('Logro no encontrado');
 
-  //   return this.prisma.logro.update({
-  //     where: { id },
-  //     data: {
-  //       ...rest,
-  //       tipo: dto.tipo !== undefined ? dto.tipo : undefined,
-  //       dificultad: dto.dificultad !== undefined ? { set: dto.dificultad } : undefined,
-  //       categoriaId: typeof categoriaId === 'number' ? categoriaId : null,
-  //       subcategoriaId: typeof subcategoriaId === 'number' ? subcategoriaId : null,
-  //       negocioId: typeof negocioId === 'number' ? negocioId : null,
-  //       productoId: typeof productoId === 'number' ? productoId : null,
-  //     },
-  //   });
-  // }
+    try {
+      return await this.prisma.logro.update({
+        where: { id },
+        data: {
+          ...(dto.titulo !== undefined ? { titulo: dto.titulo.trim() } : {}),
+          ...(dto.descripcion !== undefined
+            ? { descripcion: dto.descripcion?.trim() || null }
+            : {}),
+          ...(dto.tipo !== undefined ? { tipo: dto.tipo } : {}),
+          ...(dto.dificultad !== undefined
+            ? { dificultad: dto.dificultad }
+            : {}),
+          ...(dto.umbral !== undefined ? { umbral: dto.umbral } : {}),
+          ...(dto.recompensaPuntos !== undefined
+            ? { recompensaPuntos: dto.recompensaPuntos }
+            : {}),
+          ...(dto.categoriaId !== undefined
+            ? { categoriaId: dto.categoriaId }
+            : {}),
+          ...(dto.subcategoriaId !== undefined
+            ? { subcategoriaId: dto.subcategoriaId }
+            : {}),
+          ...(dto.negocioId !== undefined ? { negocioId: dto.negocioId } : {}),
+          ...(dto.productoId !== undefined
+            ? { productoId: dto.productoId }
+            : {}),
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        throw new BadRequestException(
+          'Alguna referencia relacionada no existe',
+        );
+      }
+      throw error;
+    }
+  }
 
   async remove(id: number) {
     return this.prisma.logro.delete({ where: { id } });

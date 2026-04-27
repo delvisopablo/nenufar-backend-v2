@@ -2,15 +2,24 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UnauthorizedException } from '@nestjs/common';
 import { ProductoService } from './producto.service';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
+import { UpdateProductoStockDto } from './dto/update-producto-stock.dto';
 
 // TODO: protege con JwtAuthGuard cuando tengas auth lista
 @Controller()
 export class ProductoController {
   constructor(private service: ProductoService) {}
+
+  private getAuthenticatedUserId(req: { user?: { id?: number } }) {
+    const userId = Number(req.user?.id);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      throw new UnauthorizedException('Autenticación requerida');
+    }
+    return userId;
+  }
 
   // Lista por negocio: GET /negocios/:id/productos
   @Get('negocios/:id/productos')
@@ -30,7 +39,7 @@ export class ProductoController {
     @Body() dto: CreateProductoDto,
     @Req() req: any,
   ) {
-    const currentUserId = req.user?.id ?? 1; // mock mientras
+    const currentUserId = this.getAuthenticatedUserId(req);
     const isAdmin = !!req.user?.isAdmin;
     return this.service.create(negocioId, dto, currentUserId, isAdmin);
   }
@@ -48,15 +57,26 @@ export class ProductoController {
     @Body() dto: UpdateProductoDto,
     @Req() req: any,
   ) {
-    const currentUserId = req.user?.id ?? 1;
+    const currentUserId = this.getAuthenticatedUserId(req);
     const isAdmin = !!req.user?.isAdmin;
     return this.service.update(id, dto, currentUserId, isAdmin);
+  }
+
+  @Patch('productos/:id/stock')
+  adjustStock(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateProductoStockDto,
+    @Req() req: any,
+  ) {
+    const currentUserId = this.getAuthenticatedUserId(req);
+    const isAdmin = !!req.user?.isAdmin;
+    return this.service.adjustStock(id, dto, currentUserId, isAdmin);
   }
 
   // Delete: DELETE /productos/:id
   @Delete('productos/:id')
   remove(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
-    const currentUserId = req.user?.id ?? 1;
+    const currentUserId = this.getAuthenticatedUserId(req);
     const isAdmin = !!req.user?.isAdmin;
     return this.service.remove(id, currentUserId, isAdmin);
   }

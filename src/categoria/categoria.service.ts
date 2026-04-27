@@ -109,6 +109,33 @@ export class CategoriaService {
     return cat;
   }
 
+  async listSubcategorias(id: number) {
+    const categoria = await this.prisma.categoria.findUnique({
+      where: { id },
+      select: { id: true, nombre: true },
+    });
+
+    if (!categoria) throw new NotFoundException('Categoría no encontrada');
+
+    const items = await this.prisma.subcategoria.findMany({
+      where: { categoriaId: id },
+      select: {
+        id: true,
+        nombre: true,
+        activo: true,
+        creadoEn: true,
+        actualizadoEn: true,
+      },
+      orderBy: { nombre: 'asc' },
+    });
+
+    return {
+      categoria,
+      total: items.length,
+      items,
+    };
+  }
+
   async create(dto: CreateCategoriaDto) {
     try {
       return await this.prisma.categoria.create({

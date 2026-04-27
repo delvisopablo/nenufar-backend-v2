@@ -8,6 +8,7 @@ import {
 import { Prisma, ReservaEstado, RolGlobal } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateReservaEstadoDto } from './dto/update-reserva-estado.dto';
+import { QueryNegocioReservasDto } from './dto/query-negocio-reservas.dto';
 
 type Horario = {
   weekly?: Record<string, [string, string][]>;
@@ -46,7 +47,7 @@ export class ReservaService {
       throw new UnauthorizedException('Autenticación requerida');
     }
 
-    const [negocio, actor] = await this.prisma.$transaction([
+    const [negocio, actor, miembro] = await this.prisma.$transaction([
       this.prisma.negocio.findUnique({
         where: { id: negocioId },
         select: { id: true, duenoId: true },
@@ -55,12 +56,21 @@ export class ReservaService {
         where: { id: actorUserId },
         select: { id: true, rolGlobal: true },
       }),
+      this.prisma.negocioMiembro.findUnique({
+        where: {
+          negocioId_usuarioId: {
+            negocioId,
+            usuarioId: actorUserId,
+          },
+        },
+        select: { usuarioId: true },
+      }),
     ]);
 
     if (!negocio) throw new NotFoundException('Negocio no encontrado');
     if (!actor) throw new UnauthorizedException('Usuario no autenticado');
 
-    if (negocio.duenoId === actorUserId) {
+    if (negocio.duenoId === actorUserId || miembro) {
       return negocio;
     }
 
@@ -227,6 +237,57 @@ export class ReservaService {
     });
     if (!r) throw new NotFoundException('Reserva no encontrada');
     return r;
+  }
+
+  async listByNegocio(
+    negocioId: number,
+    actorUserId: number,
+    query: QueryNegocioReservasDto,
+  ) {
+    await this.assertCanManageNegocio(negocioId, actorUserId);
+
+    const page = Math.max(1, Number(query.page ?? 1) | 0);
+    const limit = Math.max(1, Math.min(100, Number(query.limit ?? 20) | 0));
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.ReservaWhereInput = {
+      negocioId,
+      ...(query.estado ? { estado: query.estado } : {}),
+      ...(query.recursoId ? { recursoId: query.recursoId } : {}),
+      ...(query.usuarioId ? { usuarioId: query.usuarioId } : {}),
+      ...((query.from || query.to)
+        ? {
+            fecha: {
+              ...(query.from ? { gte: new Date(query.from) } : {}),
+              ...(query.to ? { lte: new Date(query.to) } : {}),
+            },
+          }
+        : {}),
+    };
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.reserva.findMany({
+        where,
+        include: {
+          negocio: { select: { id: true, nombre: true } },
+          usuario: {
+            select: { id: true, nombre: true, nickname: true, email: true },
+          },
+          recurso: { select: { id: true, nombre: true, capacidad: true } },
+        },
+        orderBy: [{ fecha: 'asc' }, { id: 'asc' }],
+        skip,
+        take: limit,
+      }),
+      this.prisma.reserva.count({ where }),
+    ]);
+
+    return {
+      items,
+      total,
+      page,
+      limit,
+    };
   }
 
   async actualizarEstado(

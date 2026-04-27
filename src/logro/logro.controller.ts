@@ -5,12 +5,12 @@ import {
   Get,
   Param,
   ParseIntPipe,
-  // Patch,
+  Patch,
   Post,
 } from '@nestjs/common';
 import { LogroService } from './logro.service';
 import { CreateLogroDto } from './dto/create-logro.dto';
-// import { UpdateLogroDto } from './dto/update-logro.dto';
+import { UpdateLogroDto } from './dto/update-logro.dto';
 
 @Controller('logros')
 export class LogroController {
@@ -26,10 +26,10 @@ export class LogroController {
     return this.service.findAll();
   }
 
-  // @Patch(':id')
-  // update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateLogroDto) {
-  //   return this.service.update(id, dto);
-  // }
+  @Patch(':id')
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateLogroDto) {
+    return this.service.update(id, dto);
+  }
 
   @Post(':logroId/usuario/:usuarioId')
   asignar(

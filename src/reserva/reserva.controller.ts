@@ -18,10 +18,19 @@ import {
 import { ReservaService } from './reserva.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaEstadoDto } from './dto/update-reserva-estado.dto';
+import { QueryNegocioReservasDto } from './dto/query-negocio-reservas.dto';
 
 @Controller()
 export class ReservaController {
   constructor(private service: ReservaService) {}
+
+  private getAuthenticatedUserId(req: { user?: { id?: number } }) {
+    const userId = Number(req.user?.id);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      throw new UnauthorizedException('Autenticación requerida');
+    }
+    return userId;
+  }
 
   // Disponibilidad por día
   // GET /negocios/:id/availability?date=YYYY-MM-DD
@@ -56,7 +65,7 @@ export class ReservaController {
     @Body() dto: CreateReservaDto,
     @Req() req: any,
   ) {
-    const userId = req.user?.id ?? 1; // TODO: JwtAuthGuard
+    const userId = this.getAuthenticatedUserId(req);
     return this.service.crear(
       id,
       userId,
@@ -65,6 +74,19 @@ export class ReservaController {
       dto.recursoId,
       dto.duracionMinutos,
       dto.numPersonas,
+    );
+  }
+
+  @Get('negocios/:id/reservas')
+  listByNegocio(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: QueryNegocioReservasDto,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.listByNegocio(
+      id,
+      this.getAuthenticatedUserId(req),
+      query,
     );
   }
 
@@ -79,17 +101,13 @@ export class ReservaController {
     @Body() dto: UpdateReservaEstadoDto,
     @Req() req: { user?: { id?: number } },
   ) {
-    const actorUserId = Number(req.user?.id);
-    if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
-      throw new UnauthorizedException('Autenticación requerida');
-    }
-
+    const actorUserId = this.getAuthenticatedUserId(req);
     return this.service.actualizarEstado(id, actorUserId, dto);
   }
 
   @Delete('reservas/:id')
   cancelar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
-    const userId = req.user?.id ?? 1;
+    const userId = this.getAuthenticatedUserId(req);
     const isAdmin = !!req.user?.isAdmin;
     return this.service.cancelar(id, userId, isAdmin);
   }
@@ -100,7 +118,7 @@ export class ReservaController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    const userId = req.user?.id ?? 1;
+    const userId = this.getAuthenticatedUserId(req);
     return this.service.misReservas(userId, page, limit);
   }
 }

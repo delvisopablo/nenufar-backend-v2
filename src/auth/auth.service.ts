@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable prettier/prettier */
 
 //
@@ -7,6 +6,7 @@ import {
   ConflictException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -16,6 +16,10 @@ import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcryptjs';
 import { JwtService } from '@nestjs/jwt';
 import { CookieOptions, Request, Response } from 'express';
+import { VerifyEmailDto } from './dto/verify-email.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { EmailService } from '../email/email.service';
 
 type AuthenticatedRequest = Request & {
   user?: {
@@ -51,7 +55,6 @@ const authUserSelect = {
   },
 } satisfies Prisma.UsuarioSelect;
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const registerUserSelect = {
   id: true,
   nombre: true,
@@ -65,10 +68,12 @@ const loginUserSelect = {
   nickname: true,
   email: true,
   password: true,
+  welcomeEmailSentAt: true,
 } satisfies Prisma.UsuarioSelect;
 
 type AuthUserRecord = Prisma.UsuarioGetPayload<{ select: typeof authUserSelect }>;
 type RegisterUserRecord = Prisma.UsuarioGetPayload<{ select: typeof registerUserSelect }>;
+type OneTimeTokenType = 'verify-email' | 'reset-password';
 
 function parseTTL(s?: string, fallbackSeconds = 900) {
   if (!s) return fallbackSeconds;
@@ -93,7 +98,6 @@ function normalizeRequiredString(value: unknown, fieldLabel: string) {
   return normalized;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function normalizeOptionalString(value: unknown) {
   if (typeof value !== 'string') {
     return undefined;
@@ -105,9 +109,12 @@ function normalizeOptionalString(value: unknown) {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private prisma: PrismaService,
     private jwt: JwtService,
+    private emailService: EmailService,
   ) {}
 
   private cookieOpts(ttlSeconds: number): CookieOptions {
@@ -150,6 +157,68 @@ export class AuthService {
     }
 
     return { accessSecret, refreshSecret };
+  }
+
+  private getOneTimeTokenSecret(type: OneTimeTokenType) {
+    const specificSecret =
+      type === 'verify-email'
+        ? process.env.JWT_VERIFY_EMAIL_SECRET?.trim()
+        : process.env.JWT_RESET_PASSWORD_SECRET?.trim();
+
+    return (
+      specificSecret ||
+      process.env.JWT_ACCESS_SECRET?.trim() ||
+      process.env.JWT_SECRET?.trim() ||
+      (() => {
+        throw new InternalServerErrorException(
+          'Configuración JWT incompleta en el servidor',
+        );
+      })()
+    );
+  }
+
+  private async signOneTimeToken(
+    type: OneTimeTokenType,
+    user: { id: number; email: string; nickname?: string },
+  ) {
+    const secret = this.getOneTimeTokenSecret(type);
+    const expiresIn =
+      type === 'verify-email'
+        ? process.env.JWT_VERIFY_EMAIL_TTL ?? '7d'
+        : process.env.JWT_RESET_PASSWORD_TTL ?? '1h';
+
+    return this.jwt.signAsync(
+      {
+        sub: user.id,
+        email: user.email,
+        nickname: user.nickname,
+        type,
+      },
+      {
+        secret,
+        expiresIn,
+      },
+    );
+  }
+
+  private async verifyOneTimeToken(token: string, expectedType: OneTimeTokenType) {
+    try {
+      const payload = await this.jwt.verifyAsync<{
+        sub?: number;
+        email?: string;
+        type?: OneTimeTokenType;
+      }>(token, {
+        secret: this.getOneTimeTokenSecret(expectedType),
+      });
+
+      if (!payload.sub || payload.type !== expectedType) {
+        throw new UnauthorizedException('Token inválido o expirado');
+      }
+
+      return payload;
+    } catch {
+      throw new UnauthorizedException('Token inválido o expirado');
+    }
   }
 
   private async signTokens(user: {
@@ -224,6 +293,65 @@ export class AuthService {
     };
   }
 
+  private async sendWelcomeEmailIfNeeded(user: {
+    id: number;
+    email: string;
+    nombre: string;
+    welcomeEmailSentAt: Date | null;
+  }) {
+    if (user.welcomeEmailSentAt || !this.emailService.isEnabled()) {
+      return;
+    }
+
+    const claimedAt = new Date();
+    const claimResult = await this.prisma.usuario.updateMany({
+      where: {
+        id: user.id,
+        welcomeEmailSentAt: null,
+      },
+      data: {
+        welcomeEmailSentAt: claimedAt,
+      },
+    });
+
+    if (claimResult.count === 0) {
+      return;
+    }
+
+    try {
+      await this.emailService.sendWelcomeEmail(user.email, user.nombre);
+
+      await this.prisma.usuario
+        .updateMany({
+          where: {
+            id: user.id,
+            welcomeEmailSentAt: claimedAt,
+          },
+          data: {
+            welcomeEmailSentAt: new Date(),
+          },
+        })
+        .catch(() => undefined);
+    } catch (error) {
+      this.logger.error(
+        `No se pudo enviar el welcome email al usuario ${user.id}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+
+      await this.prisma.usuario
+        .updateMany({
+          where: {
+            id: user.id,
+            welcomeEmailSentAt: claimedAt,
+          },
+          data: {
+            welcomeEmailSentAt: null,
+          },
+        })
+        .catch(() => undefined);
+    }
+  }
+
   async register(dto: RegisterDto, res: Response) {
     const normalizedName = normalizeRequiredString(dto.nombre, 'El nombre');
     const normalizedEmail = normalizeRequiredString(
@@ -277,8 +405,15 @@ export class AuthService {
 
       this.setSessionCookies(res, tokens);
 
+      const verificationToken = await this.signOneTimeToken('verify-email', {
+        id: user.id,
+        email: user.email,
+        nickname: user.nickname,
+      });
+
       return {
         usuario: this.toBasicAuthUser(user),
+        verificationToken,
       };
     } catch (error) {
       if (
@@ -319,6 +454,13 @@ export class AuthService {
         data: { ultimoLoginEn: new Date() },
       })
       .catch(() => undefined);
+
+    await this.sendWelcomeEmailIfNeeded({
+      id: user.id,
+      email: user.email,
+      nombre: user.nombre,
+      welcomeEmailSentAt: user.welcomeEmailSentAt,
+    });
 
     return {
       id: publicUser.id,
@@ -365,5 +507,59 @@ export class AuthService {
     }
 
     return this.toPublicAuthUser(user);
+  }
+
+  async verifyEmail(dto: VerifyEmailDto) {
+    const payload = await this.verifyOneTimeToken(dto.token, 'verify-email');
+
+    const user = await this.prisma.usuario.update({
+      where: { id: payload.sub },
+      data: {
+        emailVerificado: true,
+        verificadoEn: new Date(),
+      },
+      select: {
+        id: true,
+        email: true,
+        emailVerificado: true,
+        verificadoEn: true,
+      },
+    });
+
+    return { ok: true, usuario: user };
+  }
+
+  async forgotPassword(dto: ForgotPasswordDto) {
+    const user = await this.prisma.usuario.findUnique({
+      where: { email: dto.email },
+      select: { id: true, email: true, nickname: true },
+    });
+
+    if (!user) {
+      return { ok: true };
+    }
+
+    const resetToken = await this.signOneTimeToken('reset-password', {
+      id: user.id,
+      email: user.email,
+      nickname: user.nickname,
+    });
+
+    return {
+      ok: true,
+      resetToken,
+    };
+  }
+
+  async resetPassword(dto: ResetPasswordDto) {
+    const payload = await this.verifyOneTimeToken(dto.token, 'reset-password');
+    const hash = await bcrypt.hash(dto.newPassword, 10);
+
+    await this.prisma.usuario.update({
+      where: { id: payload.sub },
+      data: { password: hash },
+    });
+
+    return { ok: true };
   }
 }

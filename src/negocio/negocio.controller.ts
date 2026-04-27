@@ -12,6 +12,7 @@ import {
   Post,
   Query,
   Req,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { NegocioService } from './negocio.service';
 import { CreateNegocioDto } from './dto/create-negocio.dto';
@@ -19,6 +20,9 @@ import { UpdateNegocioDto } from './dto/update-negocio.dto';
 import { QueryNegocioDto } from './dto/query-negocio.dto';
 import { ConfigHorarioDto } from './dto/config-horario.dto';
 import { ResenaService } from '../reseña/resena.service';
+import { CreateNegocioMiembroDto } from './dto/create-negocio-miembro.dto';
+import { UpdateNegocioMiembroDto } from './dto/update-negocio-miembro.dto';
+import { CreateVisitaNegocioDto } from './dto/create-visita-negocio.dto';
 
 @Controller('negocios')
 export class NegocioController {
@@ -27,14 +31,22 @@ export class NegocioController {
     private readonly resenaService: ResenaService,
   ) {}
 
+  private getAuthenticatedUserId(req: { user?: { id?: number } }) {
+    const userId = Number(req.user?.id);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      throw new UnauthorizedException('Autenticación requerida');
+    }
+    return userId;
+  }
+
+  private getOptionalUserId(req: { user?: { id?: number } }) {
+    const userId = Number(req.user?.id);
+    return Number.isInteger(userId) && userId > 0 ? userId : undefined;
+  }
+
   @Get()
   list(@Query() q: QueryNegocioDto) {
     return this.service.list(q);
-  }
-
-  @Get(':id')
-  get(@Param('id', ParseIntPipe) id: number) {
-    return this.service.getById(id);
   }
 
   @Get(':id/resenas')
@@ -42,9 +54,72 @@ export class NegocioController {
     return this.resenaService.getResenasPorNegocio(id);
   }
 
+  @Get(':id/miembros')
+  listMiembros(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.listMiembros(id, this.getAuthenticatedUserId(req));
+  }
+
+  @Post(':id/miembros')
+  createMiembro(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateNegocioMiembroDto,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.addMiembro(id, this.getAuthenticatedUserId(req), dto);
+  }
+
+  @Patch(':id/miembros/:uid')
+  updateMiembro(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('uid', ParseIntPipe) usuarioId: number,
+    @Body() dto: UpdateNegocioMiembroDto,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.updateMiembro(
+      id,
+      usuarioId,
+      this.getAuthenticatedUserId(req),
+      dto,
+    );
+  }
+
+  @Delete(':id/miembros/:uid')
+  removeMiembro(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('uid', ParseIntPipe) usuarioId: number,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.removeMiembro(
+      id,
+      usuarioId,
+      this.getAuthenticatedUserId(req),
+    );
+  }
+
+  @Post(':id/visitas')
+  registrarVisita(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateVisitaNegocioDto,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.registrarVisita(
+      id,
+      this.getOptionalUserId(req),
+      dto,
+    );
+  }
+
+  @Get(':id')
+  get(@Param('id', ParseIntPipe) id: number) {
+    return this.service.getById(id);
+  }
+
   @Post()
   create(@Body() dto: CreateNegocioDto, @Req() req: any) {
-    const currentUserId = req.user?.id ?? 1; // TODO: JwtAuthGuard real
+    const currentUserId = this.getAuthenticatedUserId(req);
     return this.service.create(dto, currentUserId);
   }
 
@@ -54,14 +129,14 @@ export class NegocioController {
     @Body() dto: UpdateNegocioDto,
     @Req() req: any,
   ) {
-    const currentUserId = req.user?.id ?? 1;
+    const currentUserId = this.getAuthenticatedUserId(req);
     const isAdmin = !!req.user?.isAdmin;
     return this.service.update(id, dto, currentUserId, isAdmin);
   }
 
   @Delete(':id')
   remove(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
-    const currentUserId = req.user?.id ?? 1;
+    const currentUserId = this.getAuthenticatedUserId(req);
     const isAdmin = !!req.user?.isAdmin;
     return this.service.remove(id, currentUserId, isAdmin);
   }
@@ -72,7 +147,7 @@ export class NegocioController {
     @Body() dto: ConfigHorarioDto,
     @Req() req: any,
   ) {
-    const currentUserId = req.user?.id ?? 1;
+    const currentUserId = this.getAuthenticatedUserId(req);
     const isAdmin = !!req.user?.isAdmin;
     return this.service.setConfigHorario(id, dto, currentUserId, isAdmin);
   }

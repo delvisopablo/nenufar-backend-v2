@@ -4,7 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { LikeTipo, MotivoTx, PostTipo, Prisma } from '@prisma/client';
+import {
+  LikeTipo,
+  MotivoTx,
+  PostTipo,
+  Prisma,
+  RolGlobal,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 function toPaging(page?: number | string, limit?: number | string) {
@@ -94,6 +100,22 @@ export class PostService {
     return post;
   }
 
+  async listByNegocio(
+    negocioId: number,
+    params: {
+      tipo?: 'resena' | 'promocion' | 'logro';
+      usuarioId?: number;
+      q?: string;
+      page?: number | string;
+      limit?: number | string;
+    },
+  ) {
+    return this.list({
+      ...params,
+      negocioId,
+    });
+  }
+
   /** Borrar un post (solo autor o admin). Ojo: borra cascada comentarios/likes por FK. */
   async remove(id: number, currentUserId: number, isAdmin = false) {
     const post = await this.prisma.post.findUnique({
@@ -181,8 +203,51 @@ export class PostService {
   }
   async createComentario(postId: number, userId: number, contenido: string) {
     if (!contenido?.trim()) throw new BadRequestException('Contenido vacío');
+    const post = await this.prisma.post.findUnique({
+      where: { id: postId },
+      select: { id: true },
+    });
+    if (!post) throw new NotFoundException('Post no encontrado');
+
     return this.prisma.comentario.create({
       data: { postId, usuarioId: userId, contenido: contenido.trim() },
     });
+  }
+
+  async removeComentario(
+    postId: number,
+    comentarioId: number,
+    currentUserId: number,
+    isAdmin = false,
+  ) {
+    const [comentario, actor] = await this.prisma.$transaction([
+      this.prisma.comentario.findUnique({
+        where: { id: comentarioId },
+        select: { id: true, postId: true, usuarioId: true },
+      }),
+      this.prisma.usuario.findUnique({
+        where: { id: currentUserId },
+        select: { id: true, rolGlobal: true },
+      }),
+    ]);
+
+    if (!comentario || comentario.postId !== postId) {
+      throw new NotFoundException('Comentario no encontrado');
+    }
+
+    const actorIsAdmin =
+      isAdmin ||
+      actor?.rolGlobal === RolGlobal.ADMIN ||
+      actor?.rolGlobal === RolGlobal.MODERADOR;
+
+    if (!actorIsAdmin && comentario.usuarioId !== currentUserId) {
+      throw new ForbiddenException('No puedes borrar este comentario');
+    }
+
+    await this.prisma.comentario.delete({
+      where: { id: comentarioId },
+    });
+
+    return { ok: true };
   }
 }

@@ -112,4 +112,30 @@ export class DashboardController {
       query,
     );
   }
+
+  @Get('conversion')
+  getConversion(
+    @Param('id', ParseIntPipe) negocioId: number,
+    @Query() query: DashboardRangeDto,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.getConversion(
+      negocioId,
+      this.getAuthenticatedUserId(req),
+      query,
+    );
+  }
+
+  @Get('categorias')
+  getCategorias(
+    @Param('id', ParseIntPipe) negocioId: number,
+    @Query() query: DashboardRangeDto,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.getCategorias(
+      negocioId,
+      this.getAuthenticatedUserId(req),
+      query,
+    );
+  }
 }

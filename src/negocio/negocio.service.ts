@@ -7,13 +7,17 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
-import { RolNegocio } from '@prisma/client';
+import { RolGlobal, RolNegocio } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateNegocioDto } from './dto/create-negocio.dto';
 import { UpdateNegocioDto } from './dto/update-negocio.dto';
 import { QueryNegocioDto } from './dto/query-negocio.dto';
 import { ConfigHorarioDto } from './dto/config-horario.dto';
+import { CreateNegocioMiembroDto } from './dto/create-negocio-miembro.dto';
+import { UpdateNegocioMiembroDto } from './dto/update-negocio-miembro.dto';
+import { CreateVisitaNegocioDto } from './dto/create-visita-negocio.dto';
 
 function toPaging(page?: number | string, limit?: number | string) {
   const p = Math.max(1, Number(page ?? 1) | 0);
@@ -75,6 +79,36 @@ function validateHorarioShape(h: any) {
 @Injectable()
 export class NegocioService {
   constructor(private prisma: PrismaService) {}
+
+  private async assertCanManageMembers(negocioId: number, actorUserId: number) {
+    if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
+      throw new UnauthorizedException('Autenticación requerida');
+    }
+
+    const [negocio, actor] = await this.prisma.$transaction([
+      this.prisma.negocio.findUnique({
+        where: { id: negocioId },
+        select: { id: true, nombre: true, duenoId: true },
+      }),
+      this.prisma.usuario.findUnique({
+        where: { id: actorUserId },
+        select: { id: true, rolGlobal: true },
+      }),
+    ]);
+
+    if (!negocio) throw new NotFoundException('Negocio no encontrado');
+    if (!actor) throw new UnauthorizedException('Usuario no autenticado');
+
+    if (
+      negocio.duenoId !== actorUserId &&
+      actor.rolGlobal !== RolGlobal.ADMIN &&
+      actor.rolGlobal !== RolGlobal.MODERADOR
+    ) {
+      throw new ForbiddenException('No puedes gestionar este negocio');
+    }
+
+    return negocio;
+  }
 
   // LIST
   async list(qry: QueryNegocioDto) {
@@ -302,6 +336,190 @@ export class NegocioService {
     });
     if (!neg) throw new NotFoundException('Negocio no encontrado');
     return neg;
+  }
+
+  async listMiembros(negocioId: number, actorUserId: number) {
+    await this.assertCanManageMembers(negocioId, actorUserId);
+
+    const items = await this.prisma.negocioMiembro.findMany({
+      where: { negocioId },
+      include: {
+        usuario: {
+          select: {
+            id: true,
+            nombre: true,
+            nickname: true,
+            email: true,
+            foto: true,
+            estadoCuenta: true,
+          },
+        },
+      },
+      orderBy: [{ rol: 'asc' }, { creadoEn: 'asc' }],
+    });
+
+    return { total: items.length, items };
+  }
+
+  async addMiembro(
+    negocioId: number,
+    actorUserId: number,
+    dto: CreateNegocioMiembroDto,
+  ) {
+    const negocio = await this.assertCanManageMembers(negocioId, actorUserId);
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id: dto.usuarioId },
+      select: { id: true, nombre: true, email: true },
+    });
+
+    if (!usuario) throw new NotFoundException('Usuario no encontrado');
+
+    const rol =
+      dto.usuarioId === negocio.duenoId ? RolNegocio.DUENO : dto.rol ?? RolNegocio.EMPLEADO;
+
+    if (dto.usuarioId !== negocio.duenoId && rol === RolNegocio.DUENO) {
+      throw new BadRequestException(
+        'No puedes asignar rol DUENO a un usuario que no sea el dueño del negocio',
+      );
+    }
+
+    const miembro = await this.prisma.negocioMiembro.upsert({
+      where: {
+        negocioId_usuarioId: {
+          negocioId,
+          usuarioId: dto.usuarioId,
+        },
+      },
+      update: { rol },
+      create: {
+        negocioId,
+        usuarioId: dto.usuarioId,
+        rol,
+      },
+      include: {
+        usuario: {
+          select: {
+            id: true,
+            nombre: true,
+            nickname: true,
+            email: true,
+            foto: true,
+          },
+        },
+      },
+    });
+
+    return miembro;
+  }
+
+  async updateMiembro(
+    negocioId: number,
+    usuarioId: number,
+    actorUserId: number,
+    dto: UpdateNegocioMiembroDto,
+  ) {
+    const negocio = await this.assertCanManageMembers(negocioId, actorUserId);
+    const miembro = await this.prisma.negocioMiembro.findUnique({
+      where: {
+        negocioId_usuarioId: {
+          negocioId,
+          usuarioId,
+        },
+      },
+      select: {
+        negocioId: true,
+        usuarioId: true,
+      },
+    });
+
+    if (!miembro) throw new NotFoundException('Miembro no encontrado');
+
+    if (usuarioId === negocio.duenoId && dto.rol !== RolNegocio.DUENO) {
+      throw new BadRequestException('El dueño del negocio debe conservar rol DUENO');
+    }
+
+    if (usuarioId !== negocio.duenoId && dto.rol === RolNegocio.DUENO) {
+      throw new BadRequestException(
+        'No puedes promocionar a DUENO desde este endpoint',
+      );
+    }
+
+    return this.prisma.negocioMiembro.update({
+      where: {
+        negocioId_usuarioId: {
+          negocioId,
+          usuarioId,
+        },
+      },
+      data: { rol: dto.rol },
+      include: {
+        usuario: {
+          select: {
+            id: true,
+            nombre: true,
+            nickname: true,
+            email: true,
+            foto: true,
+          },
+        },
+      },
+    });
+  }
+
+  async removeMiembro(
+    negocioId: number,
+    usuarioId: number,
+    actorUserId: number,
+  ) {
+    const negocio = await this.assertCanManageMembers(negocioId, actorUserId);
+
+    if (usuarioId === negocio.duenoId) {
+      throw new BadRequestException('No puedes eliminar al dueño del negocio');
+    }
+
+    try {
+      await this.prisma.negocioMiembro.delete({
+        where: {
+          negocioId_usuarioId: {
+            negocioId,
+            usuarioId,
+          },
+        },
+      });
+    } catch {
+      throw new NotFoundException('Miembro no encontrado');
+    }
+
+    return { ok: true };
+  }
+
+  async registrarVisita(
+    negocioId: number,
+    actorUserId: number | undefined,
+    dto: CreateVisitaNegocioDto,
+  ) {
+    const negocio = await this.prisma.negocio.findUnique({
+      where: { id: negocioId },
+      select: { id: true, nombre: true },
+    });
+
+    if (!negocio) throw new NotFoundException('Negocio no encontrado');
+
+    const visita = await this.prisma.visitaNegocio.create({
+      data: {
+        negocioId,
+        usuarioId:
+          actorUserId && Number.isInteger(actorUserId) && actorUserId > 0
+            ? actorUserId
+            : null,
+        origen: dto.origen?.trim() || null,
+      },
+    });
+
+    return {
+      ok: true,
+      visita,
+    };
   }
 
   //  // AVAILABILITY - descomentar

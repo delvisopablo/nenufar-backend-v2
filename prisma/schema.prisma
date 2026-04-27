@@ -137,6 +137,7 @@ model Usuario {
   emailVerificado Boolean     @default(false)
   verificadoEn   DateTime?
   ultimoLoginEn  DateTime?
+  welcomeEmailSentAt DateTime?
   estadoCuenta   EstadoCuenta @default(ACTIVA)
   rolGlobal      RolGlobal    @default(USUARIO)
 
