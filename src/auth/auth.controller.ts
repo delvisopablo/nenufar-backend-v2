@@ -6,6 +6,7 @@ import type { Request, Response } from 'express';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { RegisterNegocioDto } from './dto/register-negocio.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -25,6 +26,14 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     return this.authService.login(dto, res);
+  }
+
+  @Post('registro-negocio')
+  async registroNegocio(
+    @Body() dto: RegisterNegocioDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.authService.registerNegocio(dto, res);
   }
 
   @Post('refresh')

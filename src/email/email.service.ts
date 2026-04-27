@@ -26,10 +26,6 @@ export class EmailService {
   async sendWelcomeEmail(
     to: string,
     name?: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _p0?: string,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _nombre?: string,
   ): Promise<void> {
     if (!this.isEnabled()) {
       return;
@@ -93,12 +89,22 @@ export class EmailService {
   </body>
 </html>`;
 
-    const response = await this.getClient().emails.send({
-      from,
-      to,
-      subject: 'Bienvenido a Nenúfar',
-      html,
-    });
+    let response: Awaited<ReturnType<Resend['emails']['send']>>;
+
+    try {
+      response = await this.getClient().emails.send({
+        from,
+        to,
+        subject: 'Bienvenido a Nenúfar',
+        html,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Error enviando welcome email a ${to}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw error;
+    }
 
     if (response.error) {
       this.logger.error(
@@ -106,5 +112,7 @@ export class EmailService {
       );
       throw new Error('No se pudo enviar el email de bienvenida');
     }
+
+    this.logger.log(`Welcome email aceptado por Resend para ${to}`);
   }
 }

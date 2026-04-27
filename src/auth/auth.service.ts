@@ -20,6 +20,7 @@ import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { EmailService } from '../email/email.service';
+import { RegisterNegocioDto } from './dto/register-negocio.dto';
 
 type AuthenticatedRequest = Request & {
   user?: {
@@ -68,12 +69,35 @@ const loginUserSelect = {
   nickname: true,
   email: true,
   password: true,
+} satisfies Prisma.UsuarioSelect;
+
+const welcomeEmailUserSelect = {
+  id: true,
+  nombre: true,
+  email: true,
   welcomeEmailSentAt: true,
 } satisfies Prisma.UsuarioSelect;
 
 type AuthUserRecord = Prisma.UsuarioGetPayload<{ select: typeof authUserSelect }>;
 type RegisterUserRecord = Prisma.UsuarioGetPayload<{ select: typeof registerUserSelect }>;
+type WelcomeEmailUserRecord = Prisma.UsuarioGetPayload<{
+  select: typeof welcomeEmailUserSelect;
+}>;
+type RegisterNegocioResult = {
+  user: {
+    id: number;
+    nombre: string;
+    nickname: string;
+    email: string;
+  };
+  negocio: {
+    id: number;
+    nombre: string;
+    horario: Prisma.JsonValue | null;
+  };
+};
 type OneTimeTokenType = 'verify-email' | 'reset-password';
+const welcomeEmailLockNamespace = 4042;
 
 function parseTTL(s?: string, fallbackSeconds = 900) {
   if (!s) return fallbackSeconds;
@@ -293,62 +317,118 @@ export class AuthService {
     };
   }
 
-  private async sendWelcomeEmailIfNeeded(user: {
-    id: number;
-    email: string;
-    nombre: string;
-    welcomeEmailSentAt: Date | null;
-  }) {
-    if (user.welcomeEmailSentAt || !this.emailService.isEnabled()) {
-      return;
-    }
-
-    const claimedAt = new Date();
-    const claimResult = await this.prisma.usuario.updateMany({
-      where: {
-        id: user.id,
-        welcomeEmailSentAt: null,
-      },
-      data: {
-        welcomeEmailSentAt: claimedAt,
-      },
-    });
-
-    if (claimResult.count === 0) {
+  private async sendWelcomeEmailIfNeeded(userId: number) {
+    if (!this.emailService.isEnabled()) {
       return;
     }
 
     try {
-      await this.emailService.sendWelcomeEmail(user.email, user.nombre);
+      let wasAlreadySent = false;
+      let wasSent = false;
 
-      await this.prisma.usuario
-        .updateMany({
-          where: {
-            id: user.id,
-            welcomeEmailSentAt: claimedAt,
-          },
-          data: {
-            welcomeEmailSentAt: new Date(),
-          },
-        })
-        .catch(() => undefined);
+      await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        await tx.$queryRaw`
+          SELECT pg_advisory_xact_lock(${welcomeEmailLockNamespace}, ${userId})
+        `;
+
+        const user: WelcomeEmailUserRecord | null = await tx.usuario.findUnique({
+          where: { id: userId },
+          select: welcomeEmailUserSelect,
+        });
+
+        if (!user) {
+          return;
+        }
+
+        if (user.welcomeEmailSentAt) {
+          wasAlreadySent = true;
+          return;
+        }
+
+        await this.emailService.sendWelcomeEmail(user.email, user.nombre);
+
+        await tx.usuario.update({
+          where: { id: user.id },
+          data: { welcomeEmailSentAt: new Date() },
+        });
+
+        wasSent = true;
+      });
+
+      if (wasAlreadySent) {
+        this.logger.log(
+          `Welcome email ya enviado previamente al usuario ${userId}`,
+        );
+      }
+
+      if (wasSent) {
+        this.logger.log(
+          `Welcome email enviado correctamente al usuario ${userId}`,
+        );
+      }
     } catch (error) {
       this.logger.error(
-        `No se pudo enviar el welcome email al usuario ${user.id}`,
+        `Fallo enviando welcome email al usuario ${userId}`,
         error instanceof Error ? error.stack : undefined,
       );
+    }
+  }
 
-      await this.prisma.usuario
-        .updateMany({
+  private async findOrCreateCategoriaByName(
+    tx: Prisma.TransactionClient,
+    categoriaNombre: string,
+  ) {
+    const existingCategoria = await tx.categoria.findFirst({
+      where: {
+        nombre: {
+          equals: categoriaNombre,
+          mode: 'insensitive',
+        },
+      },
+      select: {
+        id: true,
+        nombre: true,
+      },
+    });
+
+    if (existingCategoria) {
+      return existingCategoria;
+    }
+
+    try {
+      return await tx.categoria.create({
+        data: {
+          nombre: categoriaNombre,
+        },
+        select: {
+          id: true,
+          nombre: true,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const categoria = await tx.categoria.findFirst({
           where: {
-            id: user.id,
-            welcomeEmailSentAt: claimedAt,
+            nombre: {
+              equals: categoriaNombre,
+              mode: 'insensitive',
+            },
           },
-          data: {
-            welcomeEmailSentAt: null,
+          select: {
+            id: true,
+            nombre: true,
           },
-        })
-        .catch(() => undefined);
+        });
+
+        if (categoria) {
+          return categoria;
+        }
+      }
+
+      throw error;
     }
   }
 
@@ -426,6 +506,135 @@ export class AuthService {
     }
   }
 
+  async registerNegocio(dto: RegisterNegocioDto, res: Response) {
+    const normalizedOwnerName = normalizeRequiredString(
+      dto.nombreDueno,
+      'El nombre del dueño',
+    );
+    const normalizedNickname = normalizeRequiredString(
+      dto.nickname,
+      'El nickname',
+    );
+    const normalizedEmail = normalizeRequiredString(
+      dto.email,
+      'El email',
+    ).toLowerCase();
+    const normalizedBusinessName = normalizeRequiredString(
+      dto.nombreNegocio,
+      'El nombre del negocio',
+    );
+    const normalizedCategoriaNombre = normalizeRequiredString(
+      dto.categoriaNombre,
+      'La categoría',
+    );
+    const normalizedDireccion = normalizeOptionalString(dto.direccion);
+    const normalizedHistoria = normalizeOptionalString(dto.historia);
+    const fechaFundacion = new Date(dto.fechaFundacion);
+
+    if (Number.isNaN(fechaFundacion.getTime())) {
+      throw new BadRequestException('La fecha de fundación no es válida');
+    }
+
+    const exists = await this.prisma.usuario.findFirst({
+      where: {
+        OR: [{ email: normalizedEmail }, { nickname: normalizedNickname }],
+      },
+      select: {
+        id: true,
+        email: true,
+        nickname: true,
+      },
+    });
+
+    if (exists) {
+      throw new ConflictException('Email o nickname ya en uso');
+    }
+
+    const hash = await bcrypt.hash(dto.password, 10);
+
+    try {
+      const result = await this.prisma.$transaction<RegisterNegocioResult>(
+        async (tx) => {
+          const categoria = await this.findOrCreateCategoriaByName(
+            tx,
+            normalizedCategoriaNombre,
+          );
+
+          const user = await tx.usuario.create({
+            data: {
+              nombre: normalizedOwnerName,
+              nickname: normalizedNickname,
+              email: normalizedEmail,
+              password: hash,
+              ultimoLoginEn: new Date(),
+            },
+            select: {
+              id: true,
+              nombre: true,
+              nickname: true,
+              email: true,
+            },
+          });
+
+          const negocio = await tx.negocio.create({
+            data: {
+              nombre: normalizedBusinessName,
+              historia: normalizedHistoria,
+              direccion: normalizedDireccion,
+              fechaFundacion,
+              categoriaId: categoria.id,
+              duenoId: user.id,
+            },
+            select: {
+              id: true,
+              nombre: true,
+              horario: true,
+            },
+          });
+
+          await tx.negocioMiembro.create({
+            data: {
+              negocioId: negocio.id,
+              usuarioId: user.id,
+              rol: 'DUENO',
+            },
+          });
+
+          return { user, negocio };
+        },
+      );
+
+      const tokens = await this.signTokens({
+        id: result.user.id,
+        email: result.user.email,
+        nickname: result.user.nickname,
+      });
+
+      this.setSessionCookies(res, tokens);
+
+      return {
+        access_token: tokens.access,
+        usuario: {
+          id: result.user.id,
+          nombre: result.user.nombre,
+          nickname: result.user.nickname,
+          email: result.user.email,
+          rol: 'negocio',
+          negocio: result.negocio,
+        },
+      };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('Email o nickname ya en uso');
+      }
+
+      throw error;
+    }
+  }
+
   async login(dto: LoginDto, res: Response) {
     const email = normalizeRequiredString(dto.email, 'El email').toLowerCase();
     const user = await this.prisma.usuario.findUnique({
@@ -447,7 +656,7 @@ export class AuthService {
     });
 
     this.setSessionCookies(res, tokens);
-
+    
     await this.prisma.usuario
       .update({
         where: { id: user.id },
@@ -455,12 +664,9 @@ export class AuthService {
       })
       .catch(() => undefined);
 
-    await this.sendWelcomeEmailIfNeeded({
-      id: user.id,
-      email: user.email,
-      nombre: user.nombre,
-      welcomeEmailSentAt: user.welcomeEmailSentAt,
-    });
+    await this.sendWelcomeEmailIfNeeded(user.id);
+
+    
 
     return {
       id: publicUser.id,

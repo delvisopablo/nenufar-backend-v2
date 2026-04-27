@@ -5,10 +5,22 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from './auth.service';
+import { EmailService } from '../email/email.service';
 
 describe('AuthService', () => {
   let service: AuthService;
   let prisma: {
+    $transaction: jest.Mock;
+    categoria: {
+      findFirst: jest.Mock;
+      create: jest.Mock;
+    };
+    negocio: {
+      create: jest.Mock;
+    };
+    negocioMiembro: {
+      create: jest.Mock;
+    };
     usuario: {
       findFirst: jest.Mock;
       findUnique: jest.Mock;
@@ -19,6 +31,10 @@ describe('AuthService', () => {
   let jwtService: {
     signAsync: jest.Mock;
   };
+  let emailService: {
+    isEnabled: jest.Mock;
+    sendWelcomeEmail: jest.Mock;
+  };
 
   beforeEach(async () => {
     process.env.JWT_ACCESS_SECRET = 'test-access-secret';
@@ -27,6 +43,17 @@ describe('AuthService', () => {
     process.env.JWT_REFRESH_TTL = '30d';
 
     prisma = {
+      $transaction: jest.fn(),
+      categoria: {
+        findFirst: jest.fn(),
+        create: jest.fn(),
+      },
+      negocio: {
+        create: jest.fn(),
+      },
+      negocioMiembro: {
+        create: jest.fn(),
+      },
       usuario: {
         findFirst: jest.fn(),
         findUnique: jest.fn(),
@@ -39,6 +66,21 @@ describe('AuthService', () => {
       signAsync: jest.fn(),
     };
 
+    emailService = {
+      isEnabled: jest.fn().mockReturnValue(true),
+      sendWelcomeEmail: jest.fn(),
+    };
+
+    prisma.$transaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
+      callback({
+        $queryRaw: jest.fn(),
+        categoria: prisma.categoria,
+        negocio: prisma.negocio,
+        negocioMiembro: prisma.negocioMiembro,
+        usuario: prisma.usuario,
+      }),
+    );
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
@@ -49,6 +91,10 @@ describe('AuthService', () => {
         {
           provide: JwtService,
           useValue: jwtService,
+        },
+        {
+          provide: EmailService,
+          useValue: emailService,
         },
       ],
     }).compile();
@@ -161,6 +207,82 @@ describe('AuthService', () => {
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
+  it('registerNegocio crea usuario y negocio, inicia sesion y devuelve access_token', async () => {
+    prisma.usuario.findFirst.mockResolvedValue(null);
+    prisma.categoria.findFirst.mockResolvedValue({
+      id: 3,
+      nombre: 'Hosteleria',
+    });
+    prisma.usuario.create.mockResolvedValue({
+      id: 11,
+      nombre: 'Pablo',
+      nickname: 'pablo',
+      email: 'pablo@example.com',
+    });
+    prisma.negocio.create.mockResolvedValue({
+      id: 25,
+      nombre: 'Cafe Nenufar',
+      horario: null,
+    });
+    prisma.negocioMiembro.create.mockResolvedValue({});
+    jwtService.signAsync
+      .mockResolvedValueOnce('business-access-token')
+      .mockResolvedValueOnce('business-refresh-token');
+
+    const res = {
+      cookie: jest.fn(),
+    } as any;
+
+    const result = await service.registerNegocio(
+      {
+        nombreDueno: 'Pablo',
+        nickname: 'pablo',
+        email: 'pablo@example.com',
+        password: 'secret123',
+        nombreNegocio: 'Cafe Nenufar',
+        categoriaNombre: 'Hosteleria',
+        fechaFundacion: '2024-01-10',
+        direccion: 'Calle Mayor 1',
+        historia: 'Cafe de especialidad',
+      },
+      res,
+    );
+
+    expect(prisma.usuario.findFirst).toHaveBeenCalledWith({
+      where: {
+        OR: [{ email: 'pablo@example.com' }, { nickname: 'pablo' }],
+      },
+      select: {
+        id: true,
+        email: true,
+        nickname: true,
+      },
+    });
+    expect(prisma.negocioMiembro.create).toHaveBeenCalledWith({
+      data: {
+        negocioId: 25,
+        usuarioId: 11,
+        rol: 'DUENO',
+      },
+    });
+    expect(res.cookie).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({
+      access_token: 'business-access-token',
+      usuario: {
+        id: 11,
+        nombre: 'Pablo',
+        nickname: 'pablo',
+        email: 'pablo@example.com',
+        rol: 'negocio',
+        negocio: {
+          id: 25,
+          nombre: 'Cafe Nenufar',
+          horario: null,
+        },
+      },
+    });
+  });
+
   it('login devuelve 401 si la contraseña no coincide', async () => {
     prisma.usuario.findUnique.mockResolvedValue({
       id: 7,
@@ -201,6 +323,141 @@ describe('AuthService', () => {
     await expect(
       promise,
     ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('login envía el welcome email una sola vez y lo marca al enviarse bien', async () => {
+    prisma.usuario.findUnique
+      .mockResolvedValueOnce({
+        id: 7,
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        password: await bcrypt.hash('secret123', 10),
+      })
+      .mockResolvedValueOnce({
+        id: 7,
+        nombre: 'Ada',
+        email: 'ada@example.com',
+        welcomeEmailSentAt: null,
+      });
+    prisma.usuario.update.mockResolvedValue({});
+    jwtService.signAsync
+      .mockResolvedValueOnce('access-token')
+      .mockResolvedValueOnce('refresh-token');
+
+    const res = {
+      cookie: jest.fn(),
+    } as any;
+
+    const result = await service.login(
+      {
+        email: 'ada@example.com',
+        password: 'secret123',
+      },
+      res,
+    );
+
+    expect(emailService.sendWelcomeEmail).toHaveBeenCalledWith(
+      'ada@example.com',
+      'Ada',
+    );
+    expect(prisma.usuario.update).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: { id: 7 },
+        data: { ultimoLoginEn: expect.any(Date) },
+      }),
+    );
+    expect(prisma.usuario.update).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: { id: 7 },
+        data: { welcomeEmailSentAt: expect.any(Date) },
+      }),
+    );
+    expect(result).toEqual({
+      id: 7,
+      nombre: 'Ada',
+      nickname: 'ada',
+      email: 'ada@example.com',
+    });
+  });
+
+  it('login no reenvía el welcome email si ya fue enviado', async () => {
+    prisma.usuario.findUnique
+      .mockResolvedValueOnce({
+        id: 7,
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        password: await bcrypt.hash('secret123', 10),
+      })
+      .mockResolvedValueOnce({
+        id: 7,
+        nombre: 'Ada',
+        email: 'ada@example.com',
+        welcomeEmailSentAt: new Date('2026-04-01T10:00:00.000Z'),
+      });
+    prisma.usuario.update.mockResolvedValue({});
+    jwtService.signAsync
+      .mockResolvedValueOnce('access-token')
+      .mockResolvedValueOnce('refresh-token');
+
+    await service.login(
+      {
+        email: 'ada@example.com',
+        password: 'secret123',
+      },
+      { cookie: jest.fn() } as any,
+    );
+
+    expect(emailService.sendWelcomeEmail).not.toHaveBeenCalled();
+    expect(prisma.usuario.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('login no se rompe si falla el envío del welcome email y no marca el campo', async () => {
+    prisma.usuario.findUnique
+      .mockResolvedValueOnce({
+        id: 7,
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        password: await bcrypt.hash('secret123', 10),
+      })
+      .mockResolvedValueOnce({
+        id: 7,
+        nombre: 'Ada',
+        email: 'ada@example.com',
+        welcomeEmailSentAt: null,
+      });
+    prisma.usuario.update.mockResolvedValue({});
+    jwtService.signAsync
+      .mockResolvedValueOnce('access-token')
+      .mockResolvedValueOnce('refresh-token');
+    emailService.sendWelcomeEmail.mockRejectedValue(new Error('resend failed'));
+
+    const result = await service.login(
+      {
+        email: 'ada@example.com',
+        password: 'secret123',
+      },
+      { cookie: jest.fn() } as any,
+    );
+
+    expect(result).toEqual({
+      id: 7,
+      nombre: 'Ada',
+      nickname: 'ada',
+      email: 'ada@example.com',
+    });
+    expect(emailService.sendWelcomeEmail).toHaveBeenCalledTimes(1);
+    expect(prisma.usuario.update).toHaveBeenCalledTimes(1);
+    expect(prisma.usuario.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 7 },
+        data: { ultimoLoginEn: expect.any(Date) },
+      }),
+    );
   });
 
   it('me usa req.user.id del middleware y devuelve alias compatibles', async () => {
