@@ -313,6 +313,7 @@ export class AuthService {
     const cookieName = type === 'access' ? 'access_token' : 'refresh_token';
     const legacyCookieName = type === 'access' ? 'accessToken' : 'refreshToken';
 
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return
     return (
       req.cookies?.[cookieName] ??
       req.cookies?.[legacyCookieName] ??
