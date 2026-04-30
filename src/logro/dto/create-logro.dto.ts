@@ -20,6 +20,11 @@ export class CreateLogroDto {
   @IsString()
   descripcion?: string;
 
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsOptional()
+  @IsString()
+  accion?: string;
+
   @IsEnum(LogroTipo)
   tipo: LogroTipo;
 

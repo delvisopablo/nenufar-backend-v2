@@ -28,11 +28,13 @@ async function limpiarBaseDeDatos() {
 
   await prisma.like.deleteMany();
   await prisma.comentario.deleteMany();
+  await prisma.notificacion.deleteMany();
   await prisma.post.deleteMany();
 
   await prisma.logroUsuario.deleteMany();
   await prisma.petaloTx.deleteMany();
   await prisma.usuarioSeguimiento.deleteMany();
+  await prisma.negocioSeguimiento.deleteMany();
   await prisma.visitaNegocio.deleteMany();
 
   await prisma.pago.deleteMany();
@@ -264,6 +266,247 @@ async function main() {
     },
   });
 
+
+  // ── Categorías y subcategorías adicionales (idempotente) ────────────────────
+  console.log('Sembrando categorías y subcategorías ampliadas...');
+
+  type SubcatSeed = string[];
+  type CategoriaSeed = { nombre: string; subcategorias: SubcatSeed };
+
+  // Subcategorías extra para las categorías que ya existen arriba
+  const SUBS_EXTRA_HOSTELERIA: SubcatSeed = [
+    'Restaurante',
+    'Pizzería',
+    'Heladería',
+    'Pastelería',
+    'Panadería',
+    'Cervecería',
+    'Vinoteca',
+    'Food truck',
+    'Brunch',
+    'Comida para llevar',
+  ];
+  const SUBS_EXTRA_COMERCIO: SubcatSeed = [
+    'Joyería',
+    'Floristería',
+    'Mercería',
+    'Tienda de regalos',
+    'Estanco',
+    'Quiosco',
+    'Tienda de barrio',
+    'Productos gourmet',
+  ];
+  const SUBS_EXTRA_BELLEZA: SubcatSeed = [
+    'Barbería',
+    'Centro de estética',
+    'Manicura y pedicura',
+    'Spa',
+    'Masajes',
+    'Tatuajes',
+    'Solárium',
+  ];
+  const SUBS_EXTRA_OCIO: SubcatSeed = [
+    'Cine',
+    'Teatro',
+    'Sala de conciertos',
+    'Escape room',
+    'Bolera',
+    'Galería de arte',
+    'Museo',
+    'Tienda de juegos',
+  ];
+
+  for (const nombre of SUBS_EXTRA_HOSTELERIA) {
+    await prisma.subcategoria.upsert({
+      where: { categoriaId_nombre: { categoriaId: categoriaHosteleria.id, nombre } },
+      create: { nombre, categoriaId: categoriaHosteleria.id },
+      update: {},
+    });
+  }
+  for (const nombre of SUBS_EXTRA_COMERCIO) {
+    await prisma.subcategoria.upsert({
+      where: { categoriaId_nombre: { categoriaId: categoriaComercio.id, nombre } },
+      create: { nombre, categoriaId: categoriaComercio.id },
+      update: {},
+    });
+  }
+  for (const nombre of SUBS_EXTRA_BELLEZA) {
+    await prisma.subcategoria.upsert({
+      where: { categoriaId_nombre: { categoriaId: categoriaBelleza.id, nombre } },
+      create: { nombre, categoriaId: categoriaBelleza.id },
+      update: {},
+    });
+  }
+  for (const nombre of SUBS_EXTRA_OCIO) {
+    await prisma.subcategoria.upsert({
+      where: { categoriaId_nombre: { categoriaId: categoriaOcio.id, nombre } },
+      create: { nombre, categoriaId: categoriaOcio.id },
+      update: {},
+    });
+  }
+
+  // Categorías nuevas con sus subcategorías
+  const CATEGORIAS_NUEVAS: CategoriaSeed[] = [
+    {
+      nombre: 'Salud y bienestar',
+      subcategorias: [
+        'Farmacia',
+        'Parafarmacia',
+        'Clínica dental',
+        'Fisioterapia',
+        'Óptica',
+        'Nutrición y dietética',
+        'Centro médico',
+        'Psicología',
+      ],
+    },
+    {
+      nombre: 'Deporte y fitness',
+      subcategorias: [
+        'Gimnasio',
+        'Estudio de yoga',
+        'Pilates',
+        'Crossfit',
+        'Tienda de deportes',
+        'Bicicletas',
+        'Artes marciales',
+        'Padel y tenis',
+      ],
+    },
+    {
+      nombre: 'Educación y formación',
+      subcategorias: [
+        'Academia de idiomas',
+        'Academia de refuerzo',
+        'Escuela de música',
+        'Centro infantil',
+        'Centro de oposiciones',
+        'Cursos online',
+        'Coworking',
+      ],
+    },
+    {
+      nombre: 'Tecnología',
+      subcategorias: [
+        'Reparación de móviles',
+        'Reparación de ordenadores',
+        'Tienda de informática',
+        'Servicio técnico',
+        'Domótica',
+        'Impresión 3D',
+        'Videojuegos',
+      ],
+    },
+    {
+      nombre: 'Hogar y jardinería',
+      subcategorias: [
+        'Ferretería',
+        'Mueblería',
+        'Decoración',
+        'Iluminación',
+        'Vivero y plantas',
+        'Jardinería',
+        'Limpieza',
+        'Reformas',
+      ],
+    },
+    {
+      nombre: 'Servicios profesionales',
+      subcategorias: [
+        'Asesoría y gestoría',
+        'Abogacía',
+        'Notaría',
+        'Inmobiliaria',
+        'Diseño gráfico',
+        'Fotografía profesional',
+        'Imprenta',
+        'Marketing',
+      ],
+    },
+    {
+      nombre: 'Mascotas',
+      subcategorias: [
+        'Veterinaria',
+        'Peluquería canina',
+        'Tienda de mascotas',
+        'Adiestramiento',
+        'Residencia canina',
+      ],
+    },
+    {
+      nombre: 'Alimentación y mercado',
+      subcategorias: [
+        'Carnicería',
+        'Pescadería',
+        'Frutería',
+        'Supermercado',
+        'Tienda ecológica',
+        'Charcutería',
+        'Bodega',
+        'Tienda gourmet',
+      ],
+    },
+    {
+      nombre: 'Niños y familia',
+      subcategorias: [
+        'Juguetería',
+        'Ropa infantil',
+        'Centro de actividades',
+        'Ludoteca',
+        'Librería infantil',
+      ],
+    },
+    {
+      nombre: 'Movilidad y vehículos',
+      subcategorias: [
+        'Taller mecánico',
+        'Concesionario',
+        'Lavado de coches',
+        'Bicicletas y patinetes',
+        'Alquiler de vehículos',
+      ],
+    },
+    {
+      nombre: 'Arte y creatividad',
+      subcategorias: [
+        'Estudio de tatuaje artístico',
+        'Galería de arte',
+        'Bellas artes',
+        'Manualidades',
+        'Cerámica',
+        'Estudio de música',
+      ],
+    },
+    {
+      nombre: 'Ropa y moda',
+      subcategorias: [
+        'Moda mujer',
+        'Moda hombre',
+        'Moda infantil',
+        'Calzado',
+        'Bolsos y complementos',
+        'Joyería de autor',
+        'Moda deportiva',
+        'Moda sostenible',
+      ],
+    },
+  ];
+
+  for (const cat of CATEGORIAS_NUEVAS) {
+    const c = await prisma.categoria.upsert({
+      where: { nombre: cat.nombre },
+      create: { nombre: cat.nombre },
+      update: {},
+    });
+    for (const sub of cat.subcategorias) {
+      await prisma.subcategoria.upsert({
+        where: { categoriaId_nombre: { categoriaId: c.id, nombre: sub } },
+        create: { nombre: sub, categoriaId: c.id },
+        update: {},
+      });
+    }
+  }
+
   console.log('Creando negocios...');
 
   const horarioComun = {
@@ -279,6 +522,7 @@ async function main() {
   const cafeRana = await prisma.negocio.create({
     data: {
       nombre: 'Café La Rana',
+      slug: 'cafe-la-rana',
       historia:
         'Un café pequeño nacido para que la gente del barrio tenga un sitio tranquilo donde desayunar, estudiar o quedar con amigos.',
       descripcionCorta: 'Café de especialidad, tostadas y tartas caseras.',
@@ -310,6 +554,7 @@ async function main() {
   const barCharco = await prisma.negocio.create({
     data: {
       nombre: 'Bar El Charco',
+      slug: 'bar-el-charco',
       historia:
         'Bar de tapas de barrio con raciones generosas, cerveza fría y ambiente cercano.',
       descripcionCorta: 'Tapas, cañas y raciones para compartir.',
@@ -347,6 +592,7 @@ async function main() {
   const tiendaNenufar = await prisma.negocio.create({
     data: {
       nombre: 'La Tiendina Nenúfar',
+      slug: 'la-tiendina-nenufar',
       historia:
         'Tienda local de regalos, papelería creativa y productos de pequeños artesanos.',
       descripcionCorta: 'Regalos, papelería y accesorios con encanto.',
@@ -377,6 +623,7 @@ async function main() {
   const peluRizo = await prisma.negocio.create({
     data: {
       nombre: 'Rizo & Brillo',
+      slug: 'rizo-brillo',
       historia:
         'Peluquería de barrio especializada en cortes rápidos, color y tratamientos sencillos.',
       descripcionCorta: 'Peluquería cercana para el día a día.',
@@ -414,6 +661,7 @@ async function main() {
   const libreriaSapo = await prisma.negocio.create({
     data: {
       nombre: 'Librería El Sapo Lector',
+      slug: 'libreria-el-sapo-lector',
       historia:
         'Una librería pequeña con recomendaciones personales, clubes de lectura y libros de segunda mano.',
       descripcionCorta: 'Libros, café y recomendaciones sin postureo.',
@@ -1011,6 +1259,145 @@ async function main() {
   });
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
+  // ── Logros progresivos (4 niveles por acción) ───────────────────────────────
+  console.log('Sembrando logros laddered...');
+
+  type LogroTipoSeed = 'COMPRA' | 'RESENA' | 'PROMOCION' | 'RESERVA' | 'OTRO';
+  type DificultadSeed = 'FACIL' | 'MEDIA' | 'DURA' | 'LEGENDARIA';
+  type AccionLogro =
+    | 'RESENA_PUBLICADA'
+    | 'COMPRA_REALIZADA'
+    | 'RESERVA_HECHA'
+    | 'PROMOCION_CANJEADA'
+    | 'VISITA_NEGOCIO'
+    | 'NEGOCIO_SEGUIDO';
+
+  interface LogroLevel {
+    titulo: string;
+    descripcion: string;
+    umbral: number;
+    dificultad: DificultadSeed;
+    recompensaPuntos: number;
+  }
+
+  interface LogroLadder {
+    tipo: LogroTipoSeed;
+    accion: AccionLogro;
+    accionLabel: string;
+    niveles: LogroLevel[];
+  }
+
+  // Para cada "cosa que se puede hacer", 4 niveles con umbrales 1/5/20/100
+  // y recompensas crecientes. Los logros se identifican por (tipo, umbral, titulo)
+  // así que para evitar duplicados al re-sembrar buscamos primero.
+  const LOGRO_LADDERS: LogroLadder[] = [
+    {
+      tipo: 'RESENA',
+      accion: 'RESENA_PUBLICADA',
+      accionLabel: 'reseñas publicadas',
+      niveles: [
+        { titulo: 'Primera reseña',         descripcion: 'Publica tu primera reseña en Nenúfar.',        umbral: 1,   dificultad: 'FACIL',      recompensaPuntos: 25 },
+        { titulo: 'Crítico en formación',   descripcion: 'Publica 5 reseñas en negocios locales.',       umbral: 5,   dificultad: 'MEDIA',      recompensaPuntos: 100 },
+        { titulo: 'Voz del barrio',         descripcion: 'Acumula 20 reseñas publicadas.',                umbral: 20,  dificultad: 'DURA',       recompensaPuntos: 350 },
+        { titulo: 'Pluma legendaria',       descripcion: 'Llega a 100 reseñas publicadas. Una leyenda.',  umbral: 100, dificultad: 'LEGENDARIA', recompensaPuntos: 1500 },
+      ],
+    },
+    {
+      tipo: 'COMPRA',
+      accion: 'COMPRA_REALIZADA',
+      accionLabel: 'compras realizadas',
+      niveles: [
+        { titulo: 'Primera compra',         descripcion: 'Realiza tu primera compra a través de Nenúfar.', umbral: 1,   dificultad: 'FACIL',      recompensaPuntos: 25 },
+        { titulo: 'Comprador habitual',     descripcion: 'Realiza 5 compras en negocios locales.',          umbral: 5,   dificultad: 'MEDIA',      recompensaPuntos: 100 },
+        { titulo: 'Cliente fiel',           descripcion: 'Realiza 20 compras. Eres parte del barrio.',      umbral: 20,  dificultad: 'DURA',       recompensaPuntos: 400 },
+        { titulo: 'Leyenda del comercio',   descripcion: 'Realiza 100 compras locales.',                    umbral: 100, dificultad: 'LEGENDARIA', recompensaPuntos: 1800 },
+      ],
+    },
+    {
+      tipo: 'RESERVA',
+      accion: 'RESERVA_HECHA',
+      accionLabel: 'reservas hechas',
+      niveles: [
+        { titulo: 'Mesa reservada',         descripcion: 'Haz tu primera reserva.',                          umbral: 1,   dificultad: 'FACIL',      recompensaPuntos: 25 },
+        { titulo: 'Planificador',           descripcion: 'Acumula 5 reservas en negocios locales.',          umbral: 5,   dificultad: 'MEDIA',      recompensaPuntos: 100 },
+        { titulo: 'Anfitrión recurrente',   descripcion: 'Acumula 20 reservas confirmadas.',                 umbral: 20,  dificultad: 'DURA',       recompensaPuntos: 350 },
+        { titulo: 'Maître legendario',      descripcion: 'Llega a 100 reservas. La agenda es tuya.',         umbral: 100, dificultad: 'LEGENDARIA', recompensaPuntos: 1500 },
+      ],
+    },
+    {
+      tipo: 'PROMOCION',
+      accion: 'PROMOCION_CANJEADA',
+      accionLabel: 'promociones canjeadas',
+      niveles: [
+        { titulo: 'Primer descuento',       descripcion: 'Canjea tu primera promoción.',                     umbral: 1,   dificultad: 'FACIL',      recompensaPuntos: 20 },
+        { titulo: 'Cazador de ofertas',     descripcion: 'Canjea 5 promociones distintas.',                  umbral: 5,   dificultad: 'MEDIA',      recompensaPuntos: 80 },
+        { titulo: 'Maestro del ahorro',     descripcion: 'Canjea 20 promociones.',                            umbral: 20,  dificultad: 'DURA',       recompensaPuntos: 300 },
+        { titulo: 'Rey de las promociones', descripcion: 'Canjea 100 promociones. Ahorrar es un arte.',       umbral: 100, dificultad: 'LEGENDARIA', recompensaPuntos: 1300 },
+      ],
+    },
+    {
+      tipo: 'OTRO',
+      accion: 'VISITA_NEGOCIO',
+      accionLabel: 'visitas a negocios',
+      niveles: [
+        { titulo: 'Primera visita',         descripcion: 'Visita tu primer negocio en Nenúfar.',             umbral: 1,   dificultad: 'FACIL',      recompensaPuntos: 10 },
+        { titulo: 'Explorador del barrio',  descripcion: 'Visita 5 negocios diferentes.',                    umbral: 5,   dificultad: 'MEDIA',      recompensaPuntos: 50 },
+        { titulo: 'Cartógrafo local',       descripcion: 'Visita 20 negocios distintos.',                    umbral: 20,  dificultad: 'DURA',       recompensaPuntos: 250 },
+        { titulo: 'Pasaporte completo',     descripcion: 'Visita 100 negocios distintos.',                    umbral: 100, dificultad: 'LEGENDARIA', recompensaPuntos: 1200 },
+      ],
+    },
+    {
+      tipo: 'OTRO',
+      accion: 'NEGOCIO_SEGUIDO',
+      accionLabel: 'negocios seguidos',
+      niveles: [
+        { titulo: 'Primer seguidor',        descripcion: 'Sigue a tu primer negocio.',                        umbral: 1,   dificultad: 'FACIL',      recompensaPuntos: 10 },
+        { titulo: 'Coleccionista',          descripcion: 'Sigue a 5 negocios.',                                umbral: 5,   dificultad: 'MEDIA',      recompensaPuntos: 50 },
+        { titulo: 'Embajador local',        descripcion: 'Sigue a 20 negocios. Eres parte del ecosistema.',    umbral: 20,  dificultad: 'DURA',       recompensaPuntos: 250 },
+        { titulo: 'Agente del barrio',      descripcion: 'Sigue a 100 negocios. Imparable.',                   umbral: 100, dificultad: 'LEGENDARIA', recompensaPuntos: 1200 },
+      ],
+    },
+  ];
+
+  const logrosLadderCreados: Array<Awaited<ReturnType<typeof prisma.logro.create>>> = [];
+  for (const ladder of LOGRO_LADDERS) {
+    for (const nivel of ladder.niveles) {
+      // Buscar primero (no hay unique constraint sobre titulo/tipo/umbral)
+      const existente = await prisma.logro.findFirst({
+        where: {
+          titulo: nivel.titulo,
+          tipo: ladder.tipo,
+          accion: ladder.accion,
+          umbral: nivel.umbral,
+        },
+      });
+      const creado = existente
+        ? await prisma.logro.update({
+            where: { id: existente.id },
+            data: {
+              descripcion: nivel.descripcion,
+              dificultad: nivel.dificultad,
+              recompensaPuntos: nivel.recompensaPuntos,
+              accion: ladder.accion,
+            },
+          })
+        : await prisma.logro.create({
+            data: {
+              titulo: nivel.titulo,
+              descripcion: nivel.descripcion,
+              tipo: ladder.tipo,
+              accion: ladder.accion,
+              dificultad: nivel.dificultad,
+              umbral: nivel.umbral,
+              recompensaPuntos: nivel.recompensaPuntos,
+            },
+          });
+      logrosLadderCreados.push(creado);
+    }
+  }
+  console.log(`Sembrados ${logrosLadderCreados.length} logros progresivos.`);
+
   const logros = [logroPrimeraResena, logroExplorador, logroReserva, logroCafe];
 
   await prisma.logroUsuario.createMany({
@@ -1362,6 +1749,17 @@ async function main() {
       { seguidorId: usuario3.id, seguidoId: usuario1.id },
       { seguidorId: admin.id, seguidoId: usuario1.id },
       { seguidorId: usuario4.id, seguidoId: admin.id },
+    ],
+    skipDuplicates: true,
+  });
+
+  await prisma.negocioSeguimiento.createMany({
+    data: [
+      { usuarioId: usuario1.id, negocioId: cafeRana.id },
+      { usuarioId: usuario2.id, negocioId: cafeRana.id },
+      { usuarioId: usuario3.id, negocioId: barCharco.id },
+      { usuarioId: usuario4.id, negocioId: tiendaNenufar.id },
+      { usuarioId: admin.id, negocioId: libreriaSapo.id },
     ],
     skipDuplicates: true,
   });

@@ -6,19 +6,19 @@ API backend del proyecto **Nenúfar**, construido con **NestJS**, **Prisma** y *
 
 ## 🧱 Stack
 
-* **Node.js** (18+)
-* **NestJS** (REST)
-* **Prisma** (ORM)
-* **PostgreSQL**
-* **JWT** para autenticación
+- **Node.js** (18+)
+- **NestJS** (REST)
+- **Prisma** (ORM)
+- **PostgreSQL**
+- **JWT** para autenticación
 
 ---
 
 ## ✅ Requisitos previos
 
-* Node 18+ y npm o yarn
-* PostgreSQL local (opcional para desarrollo)
-* Cuenta en Render.com
+- Node 18+ y npm o yarn
+- PostgreSQL local (opcional para desarrollo)
+- Cuenta en Render.com
 
 ---
 
@@ -79,14 +79,15 @@ Scripts típicos en `package.json` (ajusta si es necesario):
 
 ## 🧪 Salud del servicio
 
-* Asegura que **Nest** escucha en `process.env.PORT` si existe:
+- Asegura que **Nest** escucha en `process.env.PORT` si existe:
 
   ```ts
   // main.ts
   const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
   await app.listen(port);
   ```
-* (Opcional) expón un endpoint de **healthcheck**, por ejemplo `GET /health`:
+
+- (Opcional) expón un endpoint de **healthcheck**, por ejemplo `GET /health`:
 
   ```ts
   // app.controller.ts
@@ -96,31 +97,63 @@ Scripts típicos en `package.json` (ajusta si es necesario):
 
 ---
 
+## 🍪 Auth por cookies HttpOnly
+
+La API usa el prefijo global `/api` y la sesión puede viajar en cookies HttpOnly:
+
+- `access_token`
+- `refresh_token`
+
+En local (`http`) las cookies se emiten con `secure=false` y `sameSite=lax`.
+En producción (`https`) se emiten con `secure=true` y `sameSite=none` para permitir frontend en Vercel y backend en Railway con `withCredentials: true`.
+
+Ejemplo de login guardando cookies en un cookie jar:
+
+```bash
+curl -i -c cookies.txt \
+  -H "Content-Type: application/json" \
+  -X POST http://localhost:3000/api/auth/login \
+  -d '{"email":"ana@example.com","password":"secreta123"}'
+```
+
+Ejemplo de llamada autenticada a `/api/auth/me` reutilizando esas cookies:
+
+```bash
+curl -i -b cookies.txt \
+  http://localhost:3000/api/auth/me
+```
+
+---
+
 ## 🚀 Despliegue en Render (GUI)
 
-1. **Crear Base de Datos** en Render: *New → PostgreSQL*.
+1. **Crear Base de Datos** en Render: _New → PostgreSQL_.
 
-   * Guarda el **Internal Database URL** (mejor para redes internas) o el **External** si lo necesitas.
-2. **Crear Web Service**: *New → Web Service → Connect a repository* y elige este repo.
+   - Guarda el **Internal Database URL** (mejor para redes internas) o el **External** si lo necesitas.
+
+2. **Crear Web Service**: _New → Web Service → Connect a repository_ y elige este repo.
 3. **Runtime**: Node 18+.
 4. **Build Command**:
 
    ```bash
    npm ci && npm run build && npx prisma generate && npx prisma migrate deploy
    ```
+
 5. **Start Command**:
 
    ```bash
    node dist/src/main.js
    ```
-6. **Environment variables** en Render → *Environment*:
 
-   * `DATABASE_URL` = (copiar de la DB de Render)
-   * `JWT_SECRET` = un secreto largo
-   * `NODE_ENV` = `production`
-   * (Render establece `PORT` automáticamente; no lo definas)
+6. **Environment variables** en Render → _Environment_:
+
+   - `DATABASE_URL` = (copiar de la DB de Render)
+   - `JWT_SECRET` = un secreto largo
+   - `NODE_ENV` = `production`
+   - (Render establece `PORT` automáticamente; no lo definas)
+
 7. **Health Check**: Path `/health` (o `/` si no tienes uno dedicado).
-8. **Auto-Deploy**: activa *Auto-Deploy* desde `main`.
+8. **Auto-Deploy**: activa _Auto-Deploy_ desde `main`.
 
 > **Migraciones**: `prisma migrate deploy` aplicará **las migraciones ya commiteadas**. Si no tienes migraciones en el repo, créalas localmente (`prisma migrate dev --name init`) y súbelas.
 
@@ -203,15 +236,13 @@ CMD ["node", "dist/src/main.js"]
 
 ## 🐞 Troubleshooting rápido
 
-* **`Repository not found` al hacer push**: revisa la URL de `origin` y permisos.
-* **`non-fast-forward`**: `git pull --rebase origin main` o `git push --force-with-lease` si quieres forzar.
-* **Render no levanta**:
+- **`Repository not found` al hacer push**: revisa la URL de `origin` y permisos.
+- **`non-fast-forward`**: `git pull --rebase origin main` o `git push --force-with-lease` si quieres forzar.
+- **Render no levanta**:
 
-  * Revisa *Logs* (Build & Runtime) en Render.
-  * Verifica que `DATABASE_URL` está bien y accesible.
-  * Asegura que el servicio escucha en `process.env.PORT`.
-  * Asegura migraciones commiteadas; usa `npx prisma migrate deploy` en el build.
+  - Revisa _Logs_ (Build & Runtime) en Render.
+  - Verifica que `DATABASE_URL` está bien y accesible.
+  - Asegura que el servicio escucha en `process.env.PORT`.
+  - Asegura migraciones commiteadas; usa `npx prisma migrate deploy` en el build.
 
 ---
-
-

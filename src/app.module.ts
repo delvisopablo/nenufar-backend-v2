@@ -27,6 +27,7 @@ import { HealthController } from './health.controller';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { RecursoModule } from './recurso/recurso.module';
 import { SubcategoriaModule } from './subcategoria/subcategoria.module';
+import { NotificacionModule } from './notificacion/notificacion.module';
 
 @Module({
   imports: [
@@ -46,6 +47,7 @@ import { SubcategoriaModule } from './subcategoria/subcategoria.module';
     DashboardModule,
     RecursoModule,
     SubcategoriaModule,
+    NotificacionModule,
     ConfigModule.forRoot({ isGlobal: true }),
     JwtModule.register({
       secret: process.env.JWT_SECRET,

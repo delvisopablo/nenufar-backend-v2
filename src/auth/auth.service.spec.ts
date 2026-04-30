@@ -1,3 +1,6 @@
+/// <reference types="jest" />
+/* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
+
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { EstadoCuenta, Prisma, RolGlobal } from '@prisma/client';
@@ -6,6 +9,8 @@ import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from './auth.service';
 import { EmailService } from '../email/email.service';
+
+type TransactionCallback = (tx: unknown) => PromiseLike<unknown>;
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -16,6 +21,7 @@ describe('AuthService', () => {
       create: jest.Mock;
     };
     negocio: {
+      findUnique: jest.Mock;
       create: jest.Mock;
     };
     negocioMiembro: {
@@ -30,6 +36,7 @@ describe('AuthService', () => {
   };
   let jwtService: {
     signAsync: jest.Mock;
+    verifyAsync: jest.Mock;
   };
   let emailService: {
     isEnabled: jest.Mock;
@@ -41,6 +48,8 @@ describe('AuthService', () => {
     process.env.JWT_REFRESH_SECRET = 'test-refresh-secret';
     process.env.JWT_ACCESS_TTL = '15m';
     process.env.JWT_REFRESH_TTL = '30d';
+    process.env.NODE_ENV = 'test';
+    delete process.env.COOKIE_DOMAIN;
 
     prisma = {
       $transaction: jest.fn(),
@@ -49,6 +58,7 @@ describe('AuthService', () => {
         create: jest.fn(),
       },
       negocio: {
+        findUnique: jest.fn(),
         create: jest.fn(),
       },
       negocioMiembro: {
@@ -64,6 +74,7 @@ describe('AuthService', () => {
 
     jwtService = {
       signAsync: jest.fn(),
+      verifyAsync: jest.fn(),
     };
 
     emailService = {
@@ -71,14 +82,16 @@ describe('AuthService', () => {
       sendWelcomeEmail: jest.fn(),
     };
 
-    prisma.$transaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
-      callback({
-        $queryRaw: jest.fn(),
-        categoria: prisma.categoria,
-        negocio: prisma.negocio,
-        negocioMiembro: prisma.negocioMiembro,
-        usuario: prisma.usuario,
-      }),
+    prisma.$transaction.mockImplementation((callback: TransactionCallback) =>
+      Promise.resolve(
+        callback({
+          $queryRaw: jest.fn(),
+          categoria: prisma.categoria,
+          negocio: prisma.negocio,
+          negocioMiembro: prisma.negocioMiembro,
+          usuario: prisma.usuario,
+        }),
+      ),
     );
 
     const module: TestingModule = await Test.createTestingModule({
@@ -183,9 +196,11 @@ describe('AuthService', () => {
         },
         { cookie: jest.fn() } as any,
       ),
-    ).rejects.toEqual(expect.objectContaining({
-      message: 'Email o nickname ya en uso',
-    }));
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: 'Email o nickname ya en uso',
+      }),
+    );
   });
 
   it('register devuelve 409 cuando email o nickname ya existen', async () => {
@@ -213,6 +228,7 @@ describe('AuthService', () => {
       id: 3,
       nombre: 'Hosteleria',
     });
+    prisma.negocio.findUnique.mockResolvedValue(null);
     prisma.usuario.create.mockResolvedValue({
       id: 11,
       nombre: 'Pablo',
@@ -222,7 +238,9 @@ describe('AuthService', () => {
     prisma.negocio.create.mockResolvedValue({
       id: 25,
       nombre: 'Cafe Nenufar',
+      slug: 'cafe-nenufar',
       horario: null,
+      nenufarColor: null,
     });
     prisma.negocioMiembro.create.mockResolvedValue({});
     jwtService.signAsync
@@ -265,6 +283,20 @@ describe('AuthService', () => {
         rol: 'DUENO',
       },
     });
+    expect(prisma.negocio.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        nombre: 'Cafe Nenufar',
+        slug: 'cafe-nenufar',
+        duenoId: 11,
+      }),
+      select: {
+        id: true,
+        nombre: true,
+        slug: true,
+        horario: true,
+        nenufarColor: true,
+      },
+    });
     expect(res.cookie).toHaveBeenCalledTimes(2);
     expect(result).toEqual({
       access_token: 'business-access-token',
@@ -277,7 +309,9 @@ describe('AuthService', () => {
         negocio: {
           id: 25,
           nombre: 'Cafe Nenufar',
+          slug: 'cafe-nenufar',
           horario: null,
+          nenufarColor: null,
         },
       },
     });
@@ -311,18 +345,19 @@ describe('AuthService', () => {
 
     expect(prisma.usuario.findUnique).toHaveBeenCalledWith({
       where: { email: 'ada@example.com' },
-      select: {
+      select: expect.objectContaining({
         id: true,
         nombre: true,
         nickname: true,
         email: true,
         password: true,
-      },
+        foto: true,
+        biografia: true,
+        negocios: expect.any(Object),
+      }),
     });
 
-    await expect(
-      promise,
-    ).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(promise).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it('login envía el welcome email una sola vez y lo marca al enviarse bien', async () => {
@@ -333,12 +368,46 @@ describe('AuthService', () => {
         nickname: 'ada',
         email: 'ada@example.com',
         password: await bcrypt.hash('secret123', 10),
+        foto: 'ada.png',
+        biografia: 'Bio de Ada',
+        creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+        actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+        emailVerificado: true,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        rolGlobal: RolGlobal.USUARIO,
+        petalosSaldo: 3,
+        negocios: [],
       })
       .mockResolvedValueOnce({
         id: 7,
         nombre: 'Ada',
         email: 'ada@example.com',
+        nickname: 'ada',
+        foto: 'ada.png',
+        biografia: 'Bio actualizada',
+        creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+        actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+        emailVerificado: false,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        rolGlobal: RolGlobal.USUARIO,
+        petalosSaldo: 0,
+        negocios: [],
         welcomeEmailSentAt: null,
+      })
+      .mockResolvedValueOnce({
+        id: 7,
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        foto: 'ada.png',
+        biografia: 'Bio de Ada',
+        creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+        actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+        emailVerificado: true,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        rolGlobal: RolGlobal.USUARIO,
+        petalosSaldo: 3,
+        negocios: [],
       });
     prisma.usuario.update.mockResolvedValue({});
     jwtService.signAsync
@@ -375,12 +444,42 @@ describe('AuthService', () => {
         data: { welcomeEmailSentAt: expect.any(Date) },
       }),
     );
-    expect(result).toEqual({
-      id: 7,
-      nombre: 'Ada',
-      nickname: 'ada',
-      email: 'ada@example.com',
-    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 7,
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        biografia: 'Bio de Ada',
+        foto: 'ada.png',
+        foto_perfil: 'ada.png',
+        rol: 'usuario',
+      }),
+    );
+    expect(res.cookie).toHaveBeenNthCalledWith(
+      1,
+      'access_token',
+      'access-token',
+      expect.objectContaining({
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 15 * 60 * 1000,
+      }),
+    );
+    expect(res.cookie).toHaveBeenNthCalledWith(
+      2,
+      'refresh_token',
+      'refresh-token',
+      expect.objectContaining({
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+      }),
+    );
   });
 
   it('login no reenvía el welcome email si ya fue enviado', async () => {
@@ -391,6 +490,15 @@ describe('AuthService', () => {
         nickname: 'ada',
         email: 'ada@example.com',
         password: await bcrypt.hash('secret123', 10),
+        foto: null,
+        biografia: null,
+        creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+        actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+        emailVerificado: false,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        rolGlobal: RolGlobal.USUARIO,
+        petalosSaldo: 0,
+        negocios: [],
       })
       .mockResolvedValueOnce({
         id: 7,
@@ -423,12 +531,36 @@ describe('AuthService', () => {
         nickname: 'ada',
         email: 'ada@example.com',
         password: await bcrypt.hash('secret123', 10),
+        foto: null,
+        biografia: 'Bio actualizada',
+        creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+        actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+        emailVerificado: false,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        rolGlobal: RolGlobal.USUARIO,
+        petalosSaldo: 0,
+        negocios: [],
       })
       .mockResolvedValueOnce({
         id: 7,
         nombre: 'Ada',
         email: 'ada@example.com',
         welcomeEmailSentAt: null,
+      })
+      .mockResolvedValueOnce({
+        id: 7,
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        foto: null,
+        biografia: 'Bio actualizada',
+        creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+        actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+        emailVerificado: false,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        rolGlobal: RolGlobal.USUARIO,
+        petalosSaldo: 0,
+        negocios: [],
       });
     prisma.usuario.update.mockResolvedValue({});
     jwtService.signAsync
@@ -444,12 +576,18 @@ describe('AuthService', () => {
       { cookie: jest.fn() } as any,
     );
 
-    expect(result).toEqual({
-      id: 7,
-      nombre: 'Ada',
-      nickname: 'ada',
-      email: 'ada@example.com',
-    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 7,
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        foto: null,
+        foto_perfil: null,
+        biografia: 'Bio actualizada',
+        rol: 'usuario',
+      }),
+    );
     expect(emailService.sendWelcomeEmail).toHaveBeenCalledTimes(1);
     expect(prisma.usuario.update).toHaveBeenCalledTimes(1);
     expect(prisma.usuario.update).toHaveBeenCalledWith(
@@ -488,11 +626,143 @@ describe('AuthService', () => {
     expect(result).toEqual(
       expect.objectContaining({
         id: 9,
+        biografia: 'Hola',
         rolGlobal: RolGlobal.USUARIO,
         rol: 'negocio',
         foto: 'avatar.png',
         foto_perfil: 'avatar.png',
-        negocio: { id: 3, nombre: 'Cafe Demo' },
+        negocio: expect.objectContaining({ id: 3, nombre: 'Cafe Demo' }),
+      }),
+    );
+  });
+
+  it('refresh valida el refresh_token desde cookies y rota ambas cookies', async () => {
+    jwtService.verifyAsync.mockResolvedValue({
+      sub: 12,
+      email: 'ada@example.com',
+      nickname: 'ada',
+    });
+    jwtService.signAsync
+      .mockResolvedValueOnce('new-access-token')
+      .mockResolvedValueOnce('new-refresh-token');
+
+    const res = {
+      cookie: jest.fn(),
+    } as any;
+
+    const result = await service.refresh(
+      {
+        cookies: {
+          refresh_token: 'incoming-refresh-token',
+        },
+        headers: {},
+      } as any,
+      res,
+    );
+
+    expect(jwtService.verifyAsync).toHaveBeenCalledWith(
+      'incoming-refresh-token',
+      { secret: 'test-refresh-secret' },
+    );
+    expect(res.cookie).toHaveBeenNthCalledWith(
+      1,
+      'access_token',
+      'new-access-token',
+      expect.objectContaining({
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        path: '/',
+      }),
+    );
+    expect(res.cookie).toHaveBeenNthCalledWith(
+      2,
+      'refresh_token',
+      'new-refresh-token',
+      expect.objectContaining({
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        path: '/',
+      }),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('logout limpia cookies con las mismas opciones cross-site de producción', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.COOKIE_DOMAIN = '.minenufar.com';
+
+    const res = {
+      clearCookie: jest.fn(),
+    } as any;
+
+    const result = service.logout(res);
+
+    expect(res.clearCookie).toHaveBeenNthCalledWith(
+      1,
+      'access_token',
+      expect.objectContaining({
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none',
+        path: '/',
+        domain: '.minenufar.com',
+      }),
+    );
+    expect(res.clearCookie).toHaveBeenNthCalledWith(
+      2,
+      'refresh_token',
+      expect.objectContaining({
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none',
+        path: '/',
+        domain: '.minenufar.com',
+      }),
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('me verifica access_token desde cookies si el middleware no pobló req.user', async () => {
+    jwtService.verifyAsync.mockResolvedValue({
+      sub: 9,
+      email: 'demo@example.com',
+      nickname: 'demo',
+    });
+    prisma.usuario.findUnique.mockResolvedValue({
+      id: 9,
+      nombre: 'Negocio Demo',
+      nickname: 'demo',
+      email: 'demo@example.com',
+      foto: 'avatar.png',
+      biografia: 'Hola',
+      creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+      actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+      emailVerificado: true,
+      estadoCuenta: EstadoCuenta.ACTIVA,
+      rolGlobal: RolGlobal.USUARIO,
+      petalosSaldo: 8,
+      negocios: [{ id: 3, nombre: 'Cafe Demo' }],
+    });
+
+    const result = await service.me({
+      cookies: {
+        access_token: 'incoming-access-token',
+      },
+      headers: {},
+    } as any);
+
+    expect(jwtService.verifyAsync).toHaveBeenCalledWith(
+      'incoming-access-token',
+      { secret: 'test-access-secret' },
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 9,
+        email: 'demo@example.com',
+        biografia: 'Hola',
+        foto_perfil: 'avatar.png',
       }),
     );
   });

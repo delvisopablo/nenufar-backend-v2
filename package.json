@@ -21,6 +21,7 @@
     "test:e2e": "NODE_ENV=test jest --runInBand --config ./jest-e2e.config.ts",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "ts-node prisma/seed.ts",
+    "prisma:backfill:slugs": "ts-node prisma/scripts/backfill-negocio-slugs.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev"
   },

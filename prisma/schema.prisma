@@ -122,6 +122,14 @@ enum CanalVenta {
   OTRO
 }
 
+enum NotificacionTipo {
+  PROMOCION
+  POST
+  NEGOCIO
+  RESENA
+  SISTEMA
+}
+
 // ---------- Modelos ----------
 model Usuario {
   id             Int          @id @default(autoincrement())
@@ -160,7 +168,9 @@ model Usuario {
   negocioMiembros NegocioMiembro[]
   siguiendo       UsuarioSeguimiento[] @relation("UsuarioSeguidor")
   seguidores      UsuarioSeguimiento[] @relation("UsuarioSeguido")
+  siguiendoNegocios NegocioSeguimiento[]
   visitasNegocio  VisitaNegocio[]
+  notificaciones  Notificacion[]
 
   @@index([estadoCuenta])
   @@index([rolGlobal])
@@ -204,6 +214,7 @@ model Subcategoria {
 model Negocio {
   id               Int      @id @default(autoincrement())
   nombre           String
+  slug             String?  @unique
   historia         String?
   descripcionCorta String?
   fechaFundacion   DateTime
@@ -217,6 +228,9 @@ model Negocio {
   duenoId          Int
   fotoPerfil       String?
   fotoPortada      String?
+  nenufarColor     String?  @map("nenufar_color")
+  nenufarKey       String?
+  nenufarAsset     String?
   telefono         String?
   emailContacto    String?
   web              String?
@@ -248,17 +262,21 @@ model Negocio {
   pedidos         Pedido[]
   compras         Compra[]
   miembros        NegocioMiembro[]
+  seguidores      NegocioSeguimiento[]
   visitasNegocio  VisitaNegocio[]
   recursos        RecursoReserva[]
+  notificaciones  Notificacion[]
 
   @@index([categoriaId])
   @@index([subcategoriaId])
   @@index([duenoId])
+  @@index([slug])
   @@index([ciudad])
   @@index([activo])
   @@index([verificado])
   // TODO: para búsqueda geográfica real conviene un índice geoespacial manual en PostgreSQL/PostGIS.
 }
+
 
 model Producto {
   id            Int      @id @default(autoincrement())
@@ -321,6 +339,7 @@ model Post {
 
   comentarios Comentario[]
   likes       Like[]
+  notificaciones Notificacion[]
 
   @@index([creadoEn])
   @@index([tipo, creadoEn])
@@ -391,6 +410,7 @@ model Promocion {
   pack            Producto[]       @relation("PromocionPack")
   Post            Post[]
   pedidoProductos PedidoProducto[]
+  notificaciones  Notificacion[]
 
   @@index([negocioId])
   @@index([negocioId, fechaCaducidad])
@@ -406,6 +426,7 @@ model Logro {
   titulo           String
   descripcion      String?
   tipo             LogroTipo
+  accion           String?
   dificultad       Dificultad @default(FACIL)
   /// TODO: validar en backend/SQL manual que umbral > 0.
   umbral           Int
@@ -432,6 +453,7 @@ model Logro {
   @@index([negocioId])
   @@index([productoId])
   @@index([tipo])
+  @@index([accion])
 }
 
 model Pedido {
@@ -714,6 +736,30 @@ model PetaloTx {
   @@index([refTipo, refId])
 }
 
+model Notificacion {
+  id          Int              @id @default(autoincrement())
+  usuarioId   Int
+  tipo        NotificacionTipo
+  titulo      String
+  contenido   String?
+  link        String?
+  leida       Boolean          @default(false)
+  creadoEn    DateTime         @default(now())
+  leidaEn     DateTime?
+  negocioId   Int?
+  promocionId Int?
+  postId      Int?
+
+  usuario   Usuario    @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  negocio   Negocio?   @relation(fields: [negocioId], references: [id], onDelete: SetNull)
+  promocion Promocion? @relation(fields: [promocionId], references: [id], onDelete: SetNull)
+  post      Post?      @relation(fields: [postId], references: [id], onDelete: SetNull)
+
+  @@index([usuarioId, leida])
+  @@index([usuarioId, creadoEn])
+  @@index([negocioId])
+}
+
 model UsuarioSeguimiento {
   id         Int      @id @default(autoincrement())
   seguidorId Int
@@ -727,4 +773,19 @@ model UsuarioSeguimiento {
   @@index([seguidorId])
   @@index([seguidoId])
   // TODO: impedir auto-follow (`seguidorId != seguidoId`) en backend o con CHECK SQL manual.
+}
+
+model NegocioSeguimiento {
+  id        Int      @id @default(autoincrement())
+  usuarioId Int
+  negocioId Int
+  creadoEn  DateTime @default(now())
+  notificacionesActivas Boolean @default(true)
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  negocio Negocio @relation(fields: [negocioId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, negocioId])
+  @@index([usuarioId])
+  @@index([negocioId])
 }

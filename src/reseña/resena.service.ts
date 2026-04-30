@@ -8,10 +8,16 @@ import { MotivoTx, PostTipo } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateResenaDto } from './dto/create-resena.dto';
 import { UpdateResenaDto } from './dto/update-resena.dto';
+import { LogroEngineService } from '../logro/logro-engine.service';
+import { NotificacionService } from '../notificacion/notificacion.service';
 
 @Injectable()
 export class ResenaService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly notificaciones: NotificacionService,
+    private readonly logroEngine: LogroEngineService,
+  ) {}
 
   private mapResena<T extends Record<string, any>>(resena: T) {
     return {
@@ -30,7 +36,7 @@ export class ResenaService {
         puntuacion: true,
         creadoEn: true,
         usuario: { select: { id: true, nombre: true, foto: true } },
-        negocio: { select: { id: true, nombre: true } },
+        negocio: { select: { id: true, nombre: true, nenufarColor: true } },
       },
       orderBy: { creadoEn: 'desc' },
     });
@@ -64,7 +70,7 @@ export class ResenaService {
         contenido: true,
         puntuacion: true,
         creadoEn: true,
-        negocio: { select: { id: true, nombre: true } },
+        negocio: { select: { id: true, nombre: true, nenufarColor: true } },
       },
       orderBy: { creadoEn: 'desc' },
     });
@@ -83,7 +89,7 @@ export class ResenaService {
         puntuacion: true,
         creadoEn: true,
         usuario: { select: { id: true, nombre: true, foto: true } },
-        negocio: { select: { id: true, nombre: true } },
+        negocio: { select: { id: true, nombre: true, nenufarColor: true } },
       },
     });
 
@@ -105,7 +111,7 @@ export class ResenaService {
 
   /** Crear reseña + post + pagar pétalos (+5 autor, +5 dueño si distinto) */
   async crear(userId: number, dto: CreateResenaDto) {
-    return this.prisma.$transaction(async (tx) => {
+    const { post, resena } = await this.prisma.$transaction(async (tx) => {
       const existing = await tx.resena.findFirst({
         where: {
           usuarioId: userId,
@@ -131,7 +137,7 @@ export class ResenaService {
       });
 
       // crear post “one-of” apuntando a la reseña
-      await tx.post.create({
+      const post = await tx.post.create({
         data: {
           usuarioId: userId,
           tipo: PostTipo.RESENA,
@@ -180,8 +186,29 @@ export class ResenaService {
         });
       }
 
-      return resena;
+      return { resena, post };
     });
+
+    void this.notificaciones
+      .fanoutNegocio({
+        negocioId: dto.negocioId,
+        tipo: 'POST',
+        titulo: 'Nuevo post en un negocio que sigues',
+        contenido: dto.contenido?.slice(0, 140),
+        link: `/posts/${post.id}`,
+        postId: post.id,
+      })
+      .catch(() => undefined);
+
+    void this.logroEngine
+      .registrarAccion({
+        usuarioId: userId,
+        accion: 'RESENA_PUBLICADA',
+        refId: resena.id,
+      })
+      .catch(() => undefined);
+
+    return resena;
   }
 
   /** Actualizar reseña (solo autor) */

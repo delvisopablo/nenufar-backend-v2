@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsDateString,
   IsInt,
@@ -14,8 +15,19 @@ export class CreateNegocioDto {
 
   @IsString()
   @IsOptional()
+  @MaxLength(160)
+  slug?: string;
+
+  @IsString()
+  @IsOptional()
   @MaxLength(2000)
   historia?: string;
+
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsString()
+  @IsOptional()
+  @MaxLength(255)
+  nenufarColor?: string;
 
   @IsDateString()
   fechaFundacion!: string; // ISO: "YYYY-MM-DD" o fecha completa

@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, RequestMethod } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -18,6 +18,14 @@ const allowedRouteMethods = new Set([
   'OPTIONS',
   'HEAD',
 ]);
+const defaultAllowedOrigins = [
+  'https://www.minenufar.com',
+  'https://minenufar.com',
+  'https://nenufar-git-main-delvisopablos-projects.vercel.app',
+  'http://localhost:4200',
+  'http://127.0.0.1:4200',
+];
+const globalPrefixExclusions = new Set(['/health']);
 
 type RouteLayer = {
   route?: {
@@ -51,6 +59,23 @@ function normalizeRoutePaths(path?: string | string[]) {
   }
 
   return [normalizePath(path)];
+}
+
+function applyGlobalPrefixToLoggedPath(path: string) {
+  const normalizedPath = normalizePath(path);
+
+  if (globalPrefixExclusions.has(normalizedPath)) {
+    return normalizedPath;
+  }
+
+  if (
+    normalizedPath === `/${globalPrefix}` ||
+    normalizedPath.startsWith(`/${globalPrefix}/`)
+  ) {
+    return normalizedPath;
+  }
+
+  return normalizePath(`/${globalPrefix}${normalizedPath}`);
 }
 
 function extractRouterBase(layer: RouteLayer) {
@@ -87,7 +112,9 @@ function collectRoutesFromLayers(
 
       for (const method of methods) {
         for (const path of paths) {
-          routes.push(`${method} ${normalizePath(`${prefix}${path}`)}`);
+          routes.push(
+            `${method} ${applyGlobalPrefixToLoggedPath(`${prefix}${path}`)}`,
+          );
         }
       }
 
@@ -116,6 +143,10 @@ function logRegisteredRoutes(
     .filter((route) => {
       const [method, path] = route.split(' ', 2);
 
+      if (path === '/health' && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+        return false;
+      }
+
       return (
         allowedRouteMethods.has(method) &&
         Boolean(path) &&
@@ -138,27 +169,35 @@ function logRegisteredRoutes(
   }
 }
 
-async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  setupApp(app);
-  app.setGlobalPrefix(globalPrefix);
-
-  const allowedOrigins = [
-    'https://www.minenufar.com',
-    'https://minenufar.com',
-    'https://nenufar-git-main-delvisopablos-projects.vercel.app',
-    'http://localhost:4200',
-  ];
+function getAllowedCorsOrigins() {
   const extraOrigins = process.env.CORS_ORIGINS?.split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
-  const corsOrigins = [
-    ...new Set([...allowedOrigins, ...(extraOrigins ?? [])]),
-  ];
+
+  return [...new Set([...defaultAllowedOrigins, ...(extraOrigins ?? [])])];
+}
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  setupApp(app);
+  app.setGlobalPrefix(globalPrefix, {
+    exclude: [{ path: 'health', method: RequestMethod.GET }],
+  });
+
+  const corsOrigins = getAllowedCorsOrigins();
 
   app.enableCors({
-    origin: corsOrigins,
+    origin: (origin, callback) => {
+      if (!origin || corsOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`Origin ${origin} no permitido por CORS`), false);
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
+    optionsSuccessStatus: 204,
   });
 
   const cfg = new DocumentBuilder()

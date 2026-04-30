@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import { LogroService } from './logro.service';
 import { CreateLogroDto } from './dto/create-logro.dto';
@@ -22,8 +23,14 @@ export class LogroController {
   }
 
   @Get()
-  findAll() {
-    return this.service.findAll();
+  findAll(@Query('negocioId') negocioId?: string) {
+    const parsedNegocioId = negocioId ? Number(negocioId) : NaN;
+
+    return this.service.findAll(
+      Number.isInteger(parsedNegocioId) && parsedNegocioId > 0
+        ? parsedNegocioId
+        : undefined,
+    );
   }
 
   @Patch(':id')

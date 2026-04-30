@@ -2,15 +2,21 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateLogroDto } from './dto/create-logro.dto';
 import { UpdateLogroDto } from './dto/update-logro.dto';
+import { ACCION_LOGRO_LABELS, isAccionLogro } from './logro-accion';
+import { LogroEngineService } from './logro-engine.service';
 
 @Injectable()
 export class LogroService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly logroEngine: LogroEngineService,
+  ) {}
 
   async create(dto: CreateLogroDto) {
     const { categoriaId, subcategoriaId, negocioId, productoId } = dto;
@@ -21,6 +27,7 @@ export class LogroService {
           titulo: dto.titulo.trim(),
           descripcion: dto.descripcion?.trim() || null,
           tipo: dto.tipo,
+          accion: dto.accion?.trim() || null,
           dificultad: dto.dificultad,
           umbral: dto.umbral,
           recompensaPuntos: dto.recompensaPuntos,
@@ -45,12 +52,66 @@ export class LogroService {
 
   async logrosPorUsuario(usuarioId: number) {
     return this.prisma.logroUsuario.findMany({
-      where: { usuarioId },
+      where: {
+        usuarioId,
+        conseguido: true,
+      },
       include: {
-        logro: true,
+        logro: {
+          include: {
+            negocio: {
+              select: { id: true, nombre: true, nenufarColor: true },
+            },
+          },
+        },
       },
       orderBy: [{ conseguido: 'desc' }, { actualizadoEn: 'desc' }],
     });
+  }
+
+  async misLogros(usuarioId: number) {
+    return this.prisma.logroUsuario.findMany({
+      where: {
+        usuarioId,
+        conseguido: true,
+      },
+      select: {
+        id: true,
+        conseguidoEn: true,
+        logro: {
+          select: {
+            id: true,
+            titulo: true,
+            descripcion: true,
+            tipo: true,
+            dificultad: true,
+            umbral: true,
+            recompensaPuntos: true,
+            accion: true,
+          },
+        },
+      },
+      orderBy: {
+        conseguidoEn: 'desc',
+      },
+    });
+  }
+
+  async progresoUsuario(usuarioId: number) {
+    if (!Number.isInteger(usuarioId) || usuarioId <= 0) {
+      throw new UnauthorizedException('Autenticación requerida');
+    }
+
+    const progreso = await this.logroEngine.buildProgresoUsuario(usuarioId);
+
+    return progreso.map((item) => ({
+      accion: item.accion,
+      accionLabel: isAccionLogro(item.accion)
+        ? ACCION_LOGRO_LABELS[item.accion]
+        : item.accion,
+      contador: item.contador,
+      niveles: item.niveles,
+    }));
   }
 
   async asignarOIncrementar(usuarioId: number, logroId: number) {
@@ -98,7 +159,13 @@ export class LogroService {
         conseguidoEn: existente?.conseguidoEn ?? now,
       },
       include: {
-        logro: true,
+        logro: {
+          include: {
+            negocio: {
+              select: { id: true, nombre: true, nenufarColor: true },
+            },
+          },
+        },
         usuario: {
           select: { id: true, nombre: true, nickname: true },
         },
@@ -106,12 +173,27 @@ export class LogroService {
     });
   }
 
-  async findAll() {
-    return this.prisma.logro.findMany();
+  async findAll(negocioId?: number) {
+    return this.prisma.logro.findMany({
+      where: negocioId ? { negocioId } : undefined,
+      include: {
+        negocio: {
+          select: { id: true, nombre: true, nenufarColor: true },
+        },
+      },
+      orderBy: [{ actualizadoEn: 'desc' }, { id: 'desc' }],
+    });
   }
 
   async findOne(id: number) {
-    const logro = await this.prisma.logro.findUnique({ where: { id } });
+    const logro = await this.prisma.logro.findUnique({
+      where: { id },
+      include: {
+        negocio: {
+          select: { id: true, nombre: true, nenufarColor: true },
+        },
+      },
+    });
     if (!logro) throw new NotFoundException('Logro no encontrado');
     return logro;
   }
@@ -132,6 +214,9 @@ export class LogroService {
             ? { descripcion: dto.descripcion?.trim() || null }
             : {}),
           ...(dto.tipo !== undefined ? { tipo: dto.tipo } : {}),
+          ...(dto.accion !== undefined
+            ? { accion: dto.accion?.trim() || null }
+            : {}),
           ...(dto.dificultad !== undefined
             ? { dificultad: dto.dificultad }
             : {}),
@@ -149,6 +234,11 @@ export class LogroService {
           ...(dto.productoId !== undefined
             ? { productoId: dto.productoId }
             : {}),
+        },
+        include: {
+          negocio: {
+            select: { id: true, nombre: true, nenufarColor: true },
+          },
         },
       });
     } catch (error) {

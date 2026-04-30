@@ -13,7 +13,9 @@ import {
   Query,
   Req,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { NegocioService } from './negocio.service';
 import { CreateNegocioDto } from './dto/create-negocio.dto';
 import { UpdateNegocioDto } from './dto/update-negocio.dto';
@@ -23,7 +25,11 @@ import { ResenaService } from '../reseña/resena.service';
 import { CreateNegocioMiembroDto } from './dto/create-negocio-miembro.dto';
 import { UpdateNegocioMiembroDto } from './dto/update-negocio-miembro.dto';
 import { CreateVisitaNegocioDto } from './dto/create-visita-negocio.dto';
+import { AuthGuard } from '../auth/auth.guard';
+import { SeguirNegocioDto } from './dto/seguir-negocio.dto';
+import { ToggleSeguimientoNotificacionesDto } from './dto/toggle-seguimiento-notificaciones.dto';
 
+@ApiTags('Negocios')
 @Controller('negocios')
 export class NegocioController {
   constructor(
@@ -45,13 +51,74 @@ export class NegocioController {
   }
 
   @Get()
-  list(@Query() q: QueryNegocioDto) {
+  findAll(@Query() q: QueryNegocioDto) {
     return this.service.list(q);
+  }
+
+  @Get('me/siguiendo/negocios')
+  @UseGuards(AuthGuard)
+  listSeguidos(@Req() req: { user?: { id?: number } }) {
+    return this.service.getNegociosSeguidosPorUsuario(
+      this.getAuthenticatedUserId(req),
+    );
+  }
+
+  @Get('slug/:slug')
+  getBySlug(
+    @Param('slug') slug: string,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.getBySlug(slug, this.getOptionalUserId(req));
   }
 
   @Get(':id/resenas')
   resenas(@Param('id', ParseIntPipe) id: number) {
     return this.resenaService.getResenasPorNegocio(id);
+  }
+
+  @Get(':id/seguidores')
+  seguidores(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.getSeguidores(id, this.getOptionalUserId(req));
+  }
+
+  @Post(':id/seguir')
+  @UseGuards(AuthGuard)
+  seguir(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: { user?: { id?: number } },
+    @Body() body?: SeguirNegocioDto,
+  ) {
+    return this.service.seguir(
+      id,
+      this.getAuthenticatedUserId(req),
+      body?.notificaciones,
+    );
+  }
+
+  @Patch(':id/seguir/notificaciones')
+  @UseGuards(AuthGuard)
+  updateSeguimientoNotificaciones(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ToggleSeguimientoNotificacionesDto,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.updateSeguimientoNotificaciones(
+      id,
+      this.getAuthenticatedUserId(req),
+      dto.activas,
+    );
+  }
+
+  @Delete(':id/seguir')
+  @UseGuards(AuthGuard)
+  dejarDeSeguir(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.dejarDeSeguir(id, this.getAuthenticatedUserId(req));
   }
 
   @Get(':id/miembros')
@@ -105,11 +172,7 @@ export class NegocioController {
     @Body() dto: CreateVisitaNegocioDto,
     @Req() req: { user?: { id?: number } },
   ) {
-    return this.service.registrarVisita(
-      id,
-      this.getOptionalUserId(req),
-      dto,
-    );
+    return this.service.registrarVisita(id, this.getOptionalUserId(req), dto);
   }
 
   @Get(':id')

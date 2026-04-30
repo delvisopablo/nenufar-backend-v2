@@ -21,6 +21,10 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { EmailService } from '../email/email.service';
 import { RegisterNegocioDto } from './dto/register-negocio.dto';
+import {
+  generateUniqueNegocioSlug,
+  slugifyNegocioNombre,
+} from '../negocio/negocio-slug.util';
 
 type AuthenticatedRequest = Request & {
   user?: {
@@ -51,7 +55,9 @@ const authUserSelect = {
     select: {
       id: true,
       nombre: true,
+      slug: true,
       horario: true,
+      nenufarColor: true,
     },
   },
 } satisfies Prisma.UsuarioSelect;
@@ -69,6 +75,25 @@ const loginUserSelect = {
   nickname: true,
   email: true,
   password: true,
+  foto: true,
+  biografia: true,
+  creadoEn: true,
+  actualizadoEn: true,
+  emailVerificado: true,
+  estadoCuenta: true,
+  rolGlobal: true,
+  petalosSaldo: true,
+  negocios: {
+    where: { eliminadoEn: null },
+    orderBy: { creadoEn: 'asc' },
+    take: 1,
+    select: {
+      id: true,
+      nombre: true,
+      slug: true,
+      horario: true,
+    },
+  },
 } satisfies Prisma.UsuarioSelect;
 
 const welcomeEmailUserSelect = {
@@ -78,8 +103,12 @@ const welcomeEmailUserSelect = {
   welcomeEmailSentAt: true,
 } satisfies Prisma.UsuarioSelect;
 
-type AuthUserRecord = Prisma.UsuarioGetPayload<{ select: typeof authUserSelect }>;
-type RegisterUserRecord = Prisma.UsuarioGetPayload<{ select: typeof registerUserSelect }>;
+type AuthUserRecord = Prisma.UsuarioGetPayload<{
+  select: typeof authUserSelect;
+}>;
+type RegisterUserRecord = Prisma.UsuarioGetPayload<{
+  select: typeof registerUserSelect;
+}>;
 type WelcomeEmailUserRecord = Prisma.UsuarioGetPayload<{
   select: typeof welcomeEmailUserSelect;
 }>;
@@ -93,10 +122,13 @@ type RegisterNegocioResult = {
   negocio: {
     id: number;
     nombre: string;
+    slug: string | null;
     horario: Prisma.JsonValue | null;
+    nenufarColor: string | null;
   };
 };
 type OneTimeTokenType = 'verify-email' | 'reset-password';
+type SessionTokenType = 'access' | 'refresh';
 const welcomeEmailLockNamespace = 4042;
 
 function parseTTL(s?: string, fallbackSeconds = 900) {
@@ -141,14 +173,13 @@ export class AuthService {
     private emailService: EmailService,
   ) {}
 
-  private cookieOpts(ttlSeconds: number): CookieOptions {
+  private getCookieBaseOptions(): CookieOptions {
     const isProd = process.env.NODE_ENV === 'production';
     const cookieDomain = process.env.COOKIE_DOMAIN?.trim();
     const options: CookieOptions = {
       httpOnly: true,
       secure: isProd,
       sameSite: isProd ? 'none' : 'lax',
-      maxAge: ttlSeconds * 1000,
       path: '/',
     };
 
@@ -159,15 +190,15 @@ export class AuthService {
     return options;
   }
 
+  private cookieOpts(ttlSeconds: number): CookieOptions {
+    return {
+      ...this.getCookieBaseOptions(),
+      maxAge: ttlSeconds * 1000,
+    };
+  }
+
   private clearCookieOpts(): CookieOptions {
-    const cookieDomain = process.env.COOKIE_DOMAIN?.trim();
-    const options: CookieOptions = { path: '/' };
-
-    if (cookieDomain) {
-      options.domain = cookieDomain;
-    }
-
-    return options;
+    return this.getCookieBaseOptions();
   }
 
   private getJwtSecrets() {
@@ -208,8 +239,8 @@ export class AuthService {
     const secret = this.getOneTimeTokenSecret(type);
     const expiresIn =
       type === 'verify-email'
-        ? process.env.JWT_VERIFY_EMAIL_TTL ?? '7d'
-        : process.env.JWT_RESET_PASSWORD_TTL ?? '1h';
+        ? (process.env.JWT_VERIFY_EMAIL_TTL ?? '7d')
+        : (process.env.JWT_RESET_PASSWORD_TTL ?? '1h');
 
     return this.jwt.signAsync(
       {
@@ -225,7 +256,10 @@ export class AuthService {
     );
   }
 
-  private async verifyOneTimeToken(token: string, expectedType: OneTimeTokenType) {
+  private async verifyOneTimeToken(
+    token: string,
+    expectedType: OneTimeTokenType,
+  ) {
     try {
       const payload = await this.jwt.verifyAsync<{
         sub?: number;
@@ -265,12 +299,110 @@ export class AuthService {
     return { access, refresh, accessTTL, refreshTTL };
   }
 
+  private extractBearerToken(req: Request) {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader?.startsWith('Bearer ')) {
+      return undefined;
+    }
+
+    return authHeader.slice(7);
+  }
+
+  private getRequestToken(req: Request, type: SessionTokenType) {
+    const cookieName = type === 'access' ? 'access_token' : 'refresh_token';
+    const legacyCookieName = type === 'access' ? 'accessToken' : 'refreshToken';
+
+    return (
+      req.cookies?.[cookieName] ??
+      req.cookies?.[legacyCookieName] ??
+      this.extractBearerToken(req)
+    );
+  }
+
+  private maskToken(token: string) {
+    if (token.length <= 12) {
+      return `${token.slice(0, 4)}...`;
+    }
+
+    return `${token.slice(0, 6)}...${token.slice(-4)}`;
+  }
+
+  private logSessionCookies(
+    action: 'login' | 'refresh',
+    tokens: Awaited<ReturnType<AuthService['signTokens']>>,
+  ) {
+    const cookieOptions = this.getCookieBaseOptions();
+    const domainLabel = cookieOptions.domain ?? 'host-only';
+
+    this.logger.debug(
+      `[${action}] cookies seteadas access=${this.maskToken(tokens.access)} refresh=${this.maskToken(tokens.refresh)} secure=${String(cookieOptions.secure)} sameSite=${String(cookieOptions.sameSite)} domain=${domainLabel}`,
+    );
+  }
+
+  private async verifySessionToken(token: string, type: SessionTokenType) {
+    const secret =
+      type === 'access'
+        ? this.getJwtSecrets().accessSecret
+        : this.getJwtSecrets().refreshSecret;
+
+    try {
+      return await this.jwt.verifyAsync<{
+        sub: number;
+        email?: string;
+        nickname?: string;
+      }>(token, { secret });
+    } catch {
+      throw new UnauthorizedException('Token inválido');
+    }
+  }
+
+  private async resolveRequestUser(
+    req: AuthenticatedRequest,
+    type: SessionTokenType,
+  ) {
+    const requestUserId = Number(req.user?.id ?? req.user?.sub);
+    if (Number.isFinite(requestUserId) && requestUserId > 0) {
+      return {
+        id: requestUserId,
+        email: req.user?.email,
+        nickname: req.user?.nickname,
+      };
+    }
+
+    const token = this.getRequestToken(req, type);
+    if (!token) {
+      throw new UnauthorizedException();
+    }
+
+    const payload = await this.verifySessionToken(token, type);
+
+    return {
+      id: payload.sub,
+      email: payload.email,
+      nickname: payload.nickname,
+    };
+  }
+
   private setSessionCookies(
     res: Response,
     tokens: Awaited<ReturnType<AuthService['signTokens']>>,
+    action?: 'login' | 'refresh',
   ) {
-    res.cookie('access_token', tokens.access, this.cookieOpts(tokens.accessTTL));
-    res.cookie('refresh_token', tokens.refresh, this.cookieOpts(tokens.refreshTTL));
+    res.cookie(
+      'access_token',
+      tokens.access,
+      this.cookieOpts(tokens.accessTTL),
+    );
+    res.cookie(
+      'refresh_token',
+      tokens.refresh,
+      this.cookieOpts(tokens.refreshTTL),
+    );
+
+    if (action) {
+      this.logSessionCookies(action, tokens);
+    }
   }
 
   private toBasicAuthUser(user: RegisterUserRecord) {
@@ -304,17 +436,13 @@ export class AuthService {
     };
   }
 
-  private getRequestUser(req: AuthenticatedRequest) {
-    const userId = Number(req.user?.id ?? req.user?.sub);
-    if (!Number.isFinite(userId) || userId <= 0) {
-      throw new UnauthorizedException();
-    }
+  private async getPublicAuthUserById(userId: number) {
+    const user = await this.prisma.usuario.findUnique({
+      where: { id: userId },
+      select: authUserSelect,
+    });
 
-    return {
-      id: userId,
-      email: req.user?.email,
-      nickname: req.user?.nickname,
-    };
+    return user ? this.toPublicAuthUser(user) : null;
   }
 
   private async sendWelcomeEmailIfNeeded(userId: number) {
@@ -328,13 +456,15 @@ export class AuthService {
 
       await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         await tx.$queryRaw`
-          SELECT pg_advisory_xact_lock(${welcomeEmailLockNamespace}, ${userId})
+          SELECT pg_advisory_xact_lock(${welcomeEmailLockNamespace}::integer, ${userId}::integer)
         `;
 
-        const user: WelcomeEmailUserRecord | null = await tx.usuario.findUnique({
-          where: { id: userId },
-          select: welcomeEmailUserSelect,
-        });
+        const user: WelcomeEmailUserRecord | null = await tx.usuario.findUnique(
+          {
+            where: { id: userId },
+            select: welcomeEmailUserSelect,
+          },
+        );
 
         if (!user) {
           return;
@@ -432,6 +562,27 @@ export class AuthService {
     }
   }
 
+  private async resolveRequestedBusinessSlug(
+    tx: Prisma.TransactionClient,
+    value: string,
+  ) {
+    if (!value.trim()) {
+      throw new BadRequestException('El slug del negocio no puede estar vacío');
+    }
+
+    const slug = slugifyNegocioNombre(value);
+    const existing = await tx.negocio.findUnique({
+      where: { slug },
+      select: { id: true },
+    });
+
+    if (existing) {
+      throw new ConflictException('El slug del negocio ya está en uso');
+    }
+
+    return slug;
+  }
+
   async register(dto: RegisterDto, res: Response) {
     const normalizedName = normalizeRequiredString(dto.nombre, 'El nombre');
     const normalizedEmail = normalizeRequiredString(
@@ -492,7 +643,9 @@ export class AuthService {
       });
 
       return {
-        usuario: this.toBasicAuthUser(user),
+        usuario:
+          (await this.getPublicAuthUserById(user.id)) ??
+          this.toBasicAuthUser(user),
         verificationToken,
       };
     } catch (error) {
@@ -559,6 +712,9 @@ export class AuthService {
             tx,
             normalizedCategoriaNombre,
           );
+          const negocioSlug = dto.slug?.trim()
+            ? await this.resolveRequestedBusinessSlug(tx, dto.slug)
+            : await generateUniqueNegocioSlug(tx, normalizedBusinessName);
 
           const user = await tx.usuario.create({
             data: {
@@ -579,6 +735,7 @@ export class AuthService {
           const negocio = await tx.negocio.create({
             data: {
               nombre: normalizedBusinessName,
+              slug: negocioSlug,
               historia: normalizedHistoria,
               direccion: normalizedDireccion,
               fechaFundacion,
@@ -588,7 +745,9 @@ export class AuthService {
             select: {
               id: true,
               nombre: true,
+              slug: true,
               horario: true,
+              nenufarColor: true,
             },
           });
 
@@ -614,7 +773,7 @@ export class AuthService {
 
       return {
         access_token: tokens.access,
-        usuario: {
+        usuario: (await this.getPublicAuthUserById(result.user.id)) ?? {
           id: result.user.id,
           nombre: result.user.nombre,
           nickname: result.user.nickname,
@@ -647,16 +806,14 @@ export class AuthService {
     const ok = await bcrypt.compare(dto.password, user.password);
     if (!ok) throw new UnauthorizedException('Credenciales inválidas');
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { password: _password, ...publicUser } = user;
     const tokens = await this.signTokens({
       id: user.id,
       email: user.email,
       nickname: user.nickname,
     });
 
-    this.setSessionCookies(res, tokens);
-    
+    this.setSessionCookies(res, tokens, 'login');
+
     await this.prisma.usuario
       .update({
         where: { id: user.id },
@@ -666,30 +823,29 @@ export class AuthService {
 
     await this.sendWelcomeEmailIfNeeded(user.id);
 
-    
-
-    return {
-      id: publicUser.id,
-      nombre: publicUser.nombre,
-      nickname: publicUser.nickname,
-      email: publicUser.email,
-    };
+    return (
+      (await this.getPublicAuthUserById(user.id)) ?? {
+        id: user.id,
+        nombre: user.nombre,
+        nickname: user.nickname,
+        email: user.email,
+      }
+    );
   }
 
   async refresh(req: AuthenticatedRequest, res: Response) {
-    const payload = this.getRequestUser(req);
+    const payload = await this.resolveRequestUser(req, 'refresh');
     if (!payload.email || !payload.nickname) {
       throw new UnauthorizedException();
     }
 
-    const { access, refresh, accessTTL, refreshTTL } = await this.signTokens({
+    const tokens = await this.signTokens({
       id: payload.id,
       email: payload.email,
       nickname: payload.nickname,
     });
 
-    res.cookie('access_token', access, this.cookieOpts(accessTTL));
-    res.cookie('refresh_token', refresh, this.cookieOpts(refreshTTL));
+    this.setSessionCookies(res, tokens, 'refresh');
 
     return { ok: true };
   }
@@ -702,17 +858,14 @@ export class AuthService {
   }
 
   async me(req: AuthenticatedRequest) {
-    const payload = this.getRequestUser(req);
-    const user = await this.prisma.usuario.findUnique({
-      where: { id: payload.id },
-      select: authUserSelect,
-    });
+    const payload = await this.resolveRequestUser(req, 'access');
+    const user = await this.getPublicAuthUserById(payload.id);
 
     if (!user) {
       throw new UnauthorizedException();
     }
 
-    return this.toPublicAuthUser(user);
+    return user;
   }
 
   async verifyEmail(dto: VerifyEmailDto) {

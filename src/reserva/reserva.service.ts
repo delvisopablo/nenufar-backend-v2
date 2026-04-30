@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, ReservaEstado, RolGlobal } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LogroEngineService } from '../logro/logro-engine.service';
 import { UpdateReservaEstadoDto } from './dto/update-reserva-estado.dto';
 import { QueryNegocioReservasDto } from './dto/query-negocio-reservas.dto';
 
@@ -40,7 +41,10 @@ function dateFromYMDAndMinutes(ymd: string, mins: number) {
 
 @Injectable()
 export class ReservaService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly logroEngine: LogroEngineService,
+  ) {}
 
   private async assertCanManageNegocio(negocioId: number, actorUserId: number) {
     if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
@@ -204,7 +208,7 @@ export class ReservaService {
     if (!ok) throw new BadRequestException('Slot no disponible');
 
     try {
-      return await this.prisma.reserva.create({
+      const reserva = await this.prisma.reserva.create({
         data: {
           negocioId,
           usuarioId: userId,
@@ -215,6 +219,16 @@ export class ReservaService {
           numPersonas: numPersonas ?? null,
         },
       });
+
+      void this.logroEngine
+        .registrarAccion({
+          usuarioId: userId,
+          accion: 'RESERVA_HECHA',
+          refId: reserva.id,
+        })
+        .catch(() => undefined);
+
+      return reserva;
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&

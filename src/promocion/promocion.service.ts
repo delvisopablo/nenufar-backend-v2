@@ -8,6 +8,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePromocionDto } from './dto/create-promocion.dto';
 import { UpdatePromocionDto } from './dto/update-promocion.dto';
 import { ValidarPromocionDto } from './dto/validar-promocion.dto';
+import { LogroEngineService } from '../logro/logro-engine.service';
+import { NotificacionService } from '../notificacion/notificacion.service';
 
 function normalizeOptionalString(value?: string | null) {
   if (value === undefined) return undefined;
@@ -17,7 +19,11 @@ function normalizeOptionalString(value?: string | null) {
 
 @Injectable()
 export class PromocionService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly notificaciones: NotificacionService,
+    private readonly logroEngine: LogroEngineService,
+  ) {}
 
   async crearPromocion(dto: CreatePromocionDto, usuarioId: number) {
     const negocio = await this.prisma.negocio.findUnique({
@@ -30,7 +36,7 @@ export class PromocionService {
         'No puedes crear promociones para este negocio',
       );
 
-    return this.prisma.promocion.create({
+    const promocion = await this.prisma.promocion.create({
       data: {
         titulo: dto.titulo.trim(),
         descripcion: normalizeOptionalString(dto.descripcion),
@@ -49,6 +55,21 @@ export class PromocionService {
         },
       },
     });
+
+    if (promocion.activa && promocion.estado === ContenidoEstado.PUBLICADO) {
+      void this.notificaciones
+        .fanoutNegocio({
+          negocioId: dto.negocioId,
+          tipo: 'PROMOCION',
+          titulo: `Nueva promoción: ${promocion.titulo}`,
+          contenido: promocion.descripcion ?? undefined,
+          link: `/promociones/${promocion.id}`,
+          promocionId: promocion.id,
+        })
+        .catch(() => undefined);
+    }
+
+    return promocion;
   }
 
   async actualizarPromocion(
@@ -116,7 +137,9 @@ export class PromocionService {
         descuento: true,
         tipoDescuento: true,
         fechaCaducidad: true,
-        negocio: { select: { id: true, nombre: true } },
+        negocio: {
+          select: { id: true, nombre: true, nenufarColor: true },
+        },
       },
       orderBy: { fechaCaducidad: 'asc' },
       take: 10,
@@ -129,7 +152,11 @@ export class PromocionService {
     });
   }
 
-  async validarPromocion(id: number, dto: ValidarPromocionDto) {
+  async validarPromocion(
+    id: number,
+    dto: ValidarPromocionDto,
+    usuarioId?: number,
+  ) {
     const promo = await this.prisma.promocion.findUnique({
       where: { id },
       select: {
@@ -170,10 +197,7 @@ export class PromocionService {
       motivos.push('La promoción ha caducado');
     }
 
-    if (
-      promo.usosMaximos !== null &&
-      promo.usosActuales >= promo.usosMaximos
-    ) {
+    if (promo.usosMaximos !== null && promo.usosActuales >= promo.usosMaximos) {
       motivos.push('La promoción ha agotado sus usos disponibles');
     }
 
@@ -185,7 +209,7 @@ export class PromocionService {
       }
     }
 
-    return {
+    const result = {
       valida: motivos.length === 0,
       motivos,
       promocion: {
@@ -196,6 +220,18 @@ export class PromocionService {
         fechaCaducidad: promo.fechaCaducidad,
       },
     };
+
+    if (result.valida && Number.isInteger(usuarioId) && usuarioId! > 0) {
+      void this.logroEngine
+        .registrarAccion({
+          usuarioId: usuarioId!,
+          accion: 'PROMOCION_CANJEADA',
+          refId: promo.id,
+        })
+        .catch(() => undefined);
+    }
+
+    return result;
   }
 
   async borrarPromocion(id: number, usuarioId: number) {

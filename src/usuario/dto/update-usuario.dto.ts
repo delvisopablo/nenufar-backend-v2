@@ -1,10 +1,5 @@
 import { Transform } from 'class-transformer';
-import {
-  IsEmail,
-  IsOptional,
-  IsString,
-  MaxLength,
-} from 'class-validator';
+import { IsEmail, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdateUsuarioDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
@@ -30,11 +25,17 @@ export class UpdateUsuarioDto {
   @IsOptional()
   @IsString()
   @MaxLength(220)
-  biografia?: string;
+  biografia?: string | null;
 
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsOptional()
   @IsString()
   @MaxLength(255)
-  fotoPerfil?: string;
+  foto?: string | null;
+
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  fotoPerfil?: string | null;
 }

@@ -10,10 +10,12 @@ import {
   Req,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { UsuarioService } from './usuario.service';
 import { CreateUsuarioDto } from './dto/create-usuario.dto';
 import { UpdateUsuarioDto } from './dto/update-usuario.dto';
 
+@ApiTags('Usuario')
 @Controller('usuario')
 export class UsuarioController {
   constructor(private readonly usuarioService: UsuarioService) {}
@@ -34,6 +36,11 @@ export class UsuarioController {
   @Post()
   async crearUsuario(@Body() dto: CreateUsuarioDto) {
     return this.usuarioService.crearUsuario(dto);
+  }
+
+  @Get('by-nickname/:nickname')
+  async getPerfilByNickname(@Param('nickname') nickname: string) {
+    return this.usuarioService.getPerfilByNickname(nickname);
   }
 
   @Get(':id/seguidores')

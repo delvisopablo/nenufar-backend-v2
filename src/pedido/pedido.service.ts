@@ -17,6 +17,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { AddItemDto } from './dto/add-item.dto';
 import { CreateCompraDto } from './dto/create-compra.dto';
 import { CreatePagoDto } from './dto/create-pago.dto';
+import { LogroEngineService } from '../logro/logro-engine.service';
 import { QueryNegocioPedidosDto } from './dto/query-negocio-pedidos.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { UpdatePagoEstadoDto } from './dto/update-pago-estado.dto';
@@ -34,7 +35,10 @@ function asDecimal(value: Prisma.Decimal | number | string) {
 
 @Injectable()
 export class PedidoService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly logroEngine: LogroEngineService,
+  ) {}
 
   private async assertCanManageNegocio(negocioId: number, actorUserId: number) {
     if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
@@ -443,7 +447,7 @@ export class PedidoService {
     }
 
     try {
-      return await this.prisma.compra.create({
+      const compra = await this.prisma.compra.create({
         data: {
           pedidoId,
           usuarioId: userId,
@@ -458,6 +462,16 @@ export class PedidoService {
           negocio: { select: { id: true, nombre: true } },
         },
       });
+
+      void this.logroEngine
+        .registrarAccion({
+          usuarioId: userId,
+          accion: 'COMPRA_REALIZADA',
+          refId: compra.id,
+        })
+        .catch(() => undefined);
+
+      return compra;
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&

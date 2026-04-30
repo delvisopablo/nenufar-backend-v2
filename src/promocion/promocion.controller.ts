@@ -31,9 +31,20 @@ export class PromocionController {
     return req.user?.id ?? req.usuario?.id ?? 1;
   }
 
+  private getOptionalRequestUserId(req: {
+    user?: { id?: number };
+    usuario?: { id?: number };
+  }) {
+    const userId = req.user?.id ?? req.usuario?.id;
+    return typeof userId === 'number' && userId > 0 ? userId : undefined;
+  }
+
   @Post()
   crear(@Body() dto: CreatePromocionDto, @Request() req) {
-    return this.promocionService.crearPromocion(dto, this.getRequestUserId(req));
+    return this.promocionService.crearPromocion(
+      dto,
+      this.getRequestUserId(req),
+    );
   }
 
   // @Get('promociones/activas')
@@ -60,6 +71,7 @@ export class PromocionController {
           select: {
             id: true,
             nombre: true,
+            nenufarColor: true,
             categoria: true,
           },
         },
@@ -91,8 +103,13 @@ export class PromocionController {
   validar(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ValidarPromocionDto,
+    @Request() req,
   ) {
-    return this.promocionService.validarPromocion(id, dto);
+    return this.promocionService.validarPromocion(
+      id,
+      dto,
+      this.getOptionalRequestUserId(req),
+    );
   }
 
   @Patch(':id')

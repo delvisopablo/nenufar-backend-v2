@@ -51,6 +51,13 @@ export class RegisterNegocioDto {
   @MaxLength(120)
   nombreNegocio!: string;
 
+  @ApiPropertyOptional({ example: 'cafeteria-nenufar' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  slug?: string;
+
   @ApiProperty({ example: 'Hosteleria' })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()

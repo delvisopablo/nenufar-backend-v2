@@ -23,6 +23,13 @@ type NestErrorResponse = {
   message?: string | string[];
   error?: string;
 };
+type RequestWithAuthContext = RequestWithContext &
+  Request & {
+    user?: {
+      id?: number;
+      sub?: number;
+    };
+  };
 
 function messageFromHttpResponse(response: string | NestErrorResponse) {
   if (typeof response === 'string') {
@@ -83,11 +90,22 @@ function normalizeException(exception: unknown): AppError {
   return new AppError('INTERNAL_ERROR', 'Error interno del servidor', 500);
 }
 
+function getRequestUserId(req: RequestWithAuthContext) {
+  const userId = Number(req.user?.id ?? req.user?.sub);
+
+  return Number.isFinite(userId) && userId > 0 ? String(userId) : '-';
+}
+
+function getRequestPath(req: Request) {
+  const rawPath = req.originalUrl ?? req.url ?? '/';
+  return rawPath.split('?')[0] || '/';
+}
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
-    const req = ctx.getRequest<RequestWithContext & Request>();
+    const req = ctx.getRequest<RequestWithAuthContext>();
     const res = ctx.getResponse<Response>();
     const appError = normalizeException(exception);
     const isDevelopment = process.env.NODE_ENV !== 'production';
@@ -101,17 +119,21 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       res.setHeader('x-request-id', requestId);
     }
 
-    StructuredLogger.error(appError.message, {
-      requestId,
-      method: req.method,
-      path: req.originalUrl ?? req.url,
-      statusCode: appError.statusCode,
-      errorCode: appError.code,
-      message: appError.message,
-      details: appError.details,
-      stack:
-        isDevelopment && exception instanceof Error ? exception.stack : undefined,
-    });
+    const requestLine =
+      `[ERR] ${req.method} ${getRequestPath(req)} ${appError.statusCode} ` +
+      `rid=${requestId ?? '-'} user=${getRequestUserId(req)} ` +
+      `code=${appError.code} msg=${appError.message}`;
+
+    if (appError.statusCode >= 500) {
+      StructuredLogger.error(requestLine, {
+        stack:
+          isDevelopment && exception instanceof Error
+            ? exception.stack
+            : undefined,
+      });
+    } else if (appError.statusCode >= 400) {
+      StructuredLogger.warn(requestLine);
+    }
 
     res.status(appError.statusCode).json({
       ok: false,
