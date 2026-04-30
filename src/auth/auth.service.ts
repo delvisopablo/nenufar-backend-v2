@@ -1,5 +1,3 @@
-/* eslint-disable prettier/prettier */
-
 //
 import {
   BadRequestException,
@@ -201,13 +199,31 @@ export class AuthService {
     return this.getCookieBaseOptions();
   }
 
+  // private getJwtSecrets() {
+  //   const accessSecret = process.env.JWT_ACCESS_SECRET?.trim();
+  //   const refreshSecret = process.env.JWT_REFRESH_SECRET?.trim();
+
+  //   if (!accessSecret || !refreshSecret) {
+  //     throw new InternalServerErrorException(
+  //       'Configuración JWT incompleta en el servidor',
+  //     );
+  //   }
+
+  //   return { accessSecret, refreshSecret };
+  // }
+
   private getJwtSecrets() {
     const accessSecret = process.env.JWT_ACCESS_SECRET?.trim();
     const refreshSecret = process.env.JWT_REFRESH_SECRET?.trim();
 
-    if (!accessSecret || !refreshSecret) {
+    const missing: string[] = [];
+
+    if (!accessSecret) missing.push('JWT_ACCESS_SECRET');
+    if (!refreshSecret) missing.push('JWT_REFRESH_SECRET');
+
+    if (missing.length > 0) {
       throw new InternalServerErrorException(
-        'Configuración JWT incompleta en el servidor',
+        `Configuración JWT incompleta en el servidor. Faltan: ${missing.join(', ')}`,
       );
     }
 
@@ -371,11 +387,13 @@ export class AuthService {
       };
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
     const token = this.getRequestToken(req, type);
     if (!token) {
       throw new UnauthorizedException();
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     const payload = await this.verifySessionToken(token, type);
 
     return {
