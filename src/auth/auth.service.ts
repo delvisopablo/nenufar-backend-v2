@@ -23,6 +23,7 @@ import {
   generateUniqueNegocioSlug,
   slugifyNegocioNombre,
 } from '../negocio/negocio-slug.util';
+import { NenufarizarService } from '../nenufarizar/nenufarizar.service';
 
 type AuthenticatedRequest = Request & {
   user?: {
@@ -169,6 +170,7 @@ export class AuthService {
     private prisma: PrismaService,
     private jwt: JwtService,
     private emailService: EmailService,
+    private readonly nenufarizarService: NenufarizarService,
   ) {}
 
   private getCookieBaseOptions(): CookieOptions {
@@ -512,12 +514,12 @@ export class AuthService {
 
       if (wasSent) {
         this.logger.log(
-          `Welcome email enviado correctamente al usuario ${userId}`,
+          `Welcome email enviado correctamente al usuario ${userId} y marcado como enviado`,
         );
       }
     } catch (error) {
       this.logger.error(
-        `Fallo enviando welcome email al usuario ${userId}`,
+        `Fallo enviando welcome email al usuario ${userId}. El login continúa y welcomeEmailSentAt no se marca.`,
         error instanceof Error ? error.stack : undefined,
       );
     }
@@ -614,6 +616,8 @@ export class AuthService {
     );
     const normalizedBiografia = normalizeOptionalString(dto.biografia);
     const normalizedFoto = normalizeOptionalString(dto.fotoPerfil);
+    const normalizedCodigoReferido =
+      normalizeOptionalString(dto.codigoReferido)?.toUpperCase();
 
     const exists = await this.prisma.usuario.findFirst({
       where: {
@@ -646,6 +650,20 @@ export class AuthService {
         },
         select: registerUserSelect,
       });
+
+      if (normalizedCodigoReferido) {
+        try {
+          await this.nenufarizarService.procesarReferido(
+            user.id,
+            normalizedCodigoReferido,
+          );
+        } catch (error) {
+          this.logger.error(
+            `Fallo procesando referido ${normalizedCodigoReferido} para el usuario ${user.id}. El registro continúa.`,
+            error instanceof Error ? error.stack : undefined,
+          );
+        }
+      }
 
       const tokens = await this.signTokens({
         id: user.id,

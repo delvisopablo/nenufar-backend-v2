@@ -37,6 +37,14 @@ JWT_EXPIRES_IN="1d" # opcional
 # Entorno/app
 NODE_ENV="development"
 PORT=3000 # En Render, Render inyecta PORT automáticamente; el código debe usar process.env.PORT
+
+# Frontend
+FRONTEND_URL="http://localhost:5173"
+
+# Welcome email con Resend
+RESEND_ENABLED="false"
+RESEND_API_KEY=""
+EMAIL_FROM="Nenúfar <hola@tudominio.com>"
 ```
 
 > Asegúrate de **NO** commitear `.env`. Manténlo fuera del control de versiones.
@@ -59,6 +67,13 @@ npx prisma migrate dev --name init
 # 4) Levantar en desarrollo
 npm run start:dev
 ```
+
+### Probar el welcome email en local
+
+- Con `RESEND_ENABLED="false"` el login sigue funcionando y el backend no intenta enviar emails.
+- Con `RESEND_ENABLED="true"` necesitas definir `RESEND_API_KEY`, `EMAIL_FROM` y `FRONTEND_URL`.
+- El welcome email se intenta enviar solo en el primer login exitoso de usuarios con `welcomeEmailSentAt = null`.
+- Si Resend falla, el login no se rompe y `welcomeEmailSentAt` no se marca.
 
 Scripts típicos en `package.json` (ajusta si es necesario):
 

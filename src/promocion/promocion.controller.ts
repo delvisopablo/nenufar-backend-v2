@@ -13,16 +13,12 @@ import { PromocionService } from './promocion.service';
 import { CreatePromocionDto } from './dto/create-promocion.dto';
 import { UpdatePromocionDto } from './dto/update-promocion.dto';
 import { ValidarPromocionDto } from './dto/validar-promocion.dto';
-import { PrismaService } from '../../prisma/prisma.service';
 // import { AuthGuard } from '../auth/auth.guard';
 
 // @UseGuards(AuthGuard)
 @Controller('promociones')
 export class PromocionController {
-  constructor(
-    private promocionService: PromocionService,
-    private prisma: PrismaService,
-  ) {}
+  constructor(private promocionService: PromocionService) {}
 
   private getRequestUserId(req: {
     user?: { id?: number };
@@ -47,57 +43,20 @@ export class PromocionController {
     );
   }
 
-  // @Get('promociones/activas')
-  // findActivas() {
-  //   return this.prisma.promocion.findMany({
-  //     where: {
-  //       fechaCaducidad: {
-  //         gte: new Date(),
-  //       },
-  //     },
-  //   });
-  // }
+  @Get()
+  findAll() {
+    return this.promocionService.listarDisponibles();
+  }
 
   @Get('activas')
-  async findActivas() {
-    return this.prisma.promocion.findMany({
-      where: {
-        fechaCaducidad: {
-          gte: new Date(),
-        },
-      },
-      include: {
-        negocio: {
-          select: {
-            id: true,
-            nombre: true,
-            nenufarColor: true,
-            categoria: true,
-          },
-        },
-        producto: true,
-        pack: true,
-      },
-    });
+  findActivas() {
+    return this.promocionService.listarDisponibles();
   }
 
-  // 🔹 Obtener todas las promociones de un negocio concreto
   @Get('negocio/:id')
-  async findByNegocio(@Param('id') id: string) {
-    return this.prisma.promocion.findMany({
-      where: {
-        negocioId: parseInt(id),
-      },
-      include: {
-        producto: true,
-        pack: true,
-      },
-    });
+  findByNegocio(@Param('id', ParseIntPipe) id: number) {
+    return this.promocionService.listarPorNegocio(id);
   }
-  // @Get('negocio/:id')
-  // listarPorNegocio(@Param('id', ParseIntPipe) id: number) {
-  //   return this.promocionService.listarPorNegocio(id);
-  // }
 
   @Post(':id/validar')
   validar(

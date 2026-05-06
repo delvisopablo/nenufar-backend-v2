@@ -43,4 +43,11 @@ export class RegisterDto {
   @IsString()
   @MaxLength(255)
   fotoPerfil?: string;
+
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
+  @IsOptional()
+  @IsString()
+  codigoReferido?: string;
 }

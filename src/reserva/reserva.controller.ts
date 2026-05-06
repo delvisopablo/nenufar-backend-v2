@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import { ReservaService } from './reserva.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
+import { UpdateReservaDto } from './dto/update-reserva.dto';
 import { UpdateReservaEstadoDto } from './dto/update-reserva-estado.dto';
 import { QueryNegocioReservasDto } from './dto/query-negocio-reservas.dto';
 
@@ -32,8 +33,6 @@ export class ReservaController {
     return userId;
   }
 
-  // Disponibilidad por día
-  // GET /negocios/:id/availability?date=YYYY-MM-DD
   @Get('negocios/:id/availability')
   availability(
     @Param('id', ParseIntPipe) id: number,
@@ -57,10 +56,8 @@ export class ReservaController {
     return this.service.availability(id, date, parsedRecursoId);
   }
 
-  // Crear reserva en un slot
-  // POST /negocios/:id/reservas { fecha, nota? }
   @Post('negocios/:id/reservas')
-  crear(
+  crearEnNegocio(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: CreateReservaDto,
     @Req() req: any,
@@ -68,6 +65,26 @@ export class ReservaController {
     const userId = this.getAuthenticatedUserId(req);
     return this.service.crear(
       id,
+      userId,
+      dto.fecha,
+      dto.nota,
+      dto.recursoId,
+      dto.duracionMinutos,
+      dto.numPersonas,
+    );
+  }
+
+  @Post('reservas')
+  crear(@Body() dto: CreateReservaDto, @Req() req: any) {
+    const userId = this.getAuthenticatedUserId(req);
+    const negocioId = Number(dto.negocioId);
+
+    if (!Number.isInteger(negocioId) || negocioId <= 0) {
+      throw new BadRequestException('negocioId es obligatorio');
+    }
+
+    return this.service.crear(
+      negocioId,
       userId,
       dto.fecha,
       dto.nota,
@@ -90,19 +107,41 @@ export class ReservaController {
     );
   }
 
+  @Get('reservas/mis-reservas')
+  miasAlias(
+    @Req() req: any,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    const userId = this.getAuthenticatedUserId(req);
+    return this.service.misReservas(userId, page, limit);
+  }
+
   @Get('reservas/:id')
   get(@Param('id', ParseIntPipe) id: number) {
     return this.service.getById(id);
   }
 
-  @Patch('reservas/:id')
+  @Patch('reservas/:id/estado')
   actualizarEstado(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateReservaEstadoDto,
-    @Req() req: { user?: { id?: number } },
+    @Req() req: any,
   ) {
     const actorUserId = this.getAuthenticatedUserId(req);
-    return this.service.actualizarEstado(id, actorUserId, dto);
+    const isAdmin = !!req.user?.isAdmin;
+    return this.service.actualizarEstado(id, actorUserId, dto, isAdmin);
+  }
+
+  @Patch('reservas/:id')
+  actualizar(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateReservaDto,
+    @Req() req: any,
+  ) {
+    const actorUserId = this.getAuthenticatedUserId(req);
+    const isAdmin = !!req.user?.isAdmin;
+    return this.service.actualizar(id, actorUserId, dto, isAdmin);
   }
 
   @Delete('reservas/:id')

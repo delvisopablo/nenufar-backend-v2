@@ -1,8 +1,15 @@
+import { Type } from 'class-transformer';
 import { IsDateString, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 export class CreateReservaDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  negocioId?: number;
+
   @IsDateString()
-  fecha!: string; // ISO (start). Debe caer en un slot disponible generado
+  fecha!: string;
 
   @IsString()
   @IsOptional()
@@ -10,16 +17,19 @@ export class CreateReservaDto {
   nota?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   recursoId?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   duracionMinutos?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   numPersonas?: number;

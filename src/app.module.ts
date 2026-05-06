@@ -28,6 +28,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { RecursoModule } from './recurso/recurso.module';
 import { SubcategoriaModule } from './subcategoria/subcategoria.module';
 import { NotificacionModule } from './notificacion/notificacion.module';
+import { NenufarizarModule } from './nenufarizar/nenufarizar.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { NotificacionModule } from './notificacion/notificacion.module';
     RecursoModule,
     SubcategoriaModule,
     NotificacionModule,
+    NenufarizarModule,
     ConfigModule.forRoot({ isGlobal: true }),
     JwtModule.register({
       secret: process.env.JWT_SECRET,

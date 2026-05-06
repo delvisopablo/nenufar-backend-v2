@@ -10,6 +10,10 @@ import { CreateResenaDto } from './dto/create-resena.dto';
 import { UpdateResenaDto } from './dto/update-resena.dto';
 import { LogroEngineService } from '../logro/logro-engine.service';
 import { NotificacionService } from '../notificacion/notificacion.service';
+import {
+  mapNegocioPublic,
+  negocioPublicSelect,
+} from '../negocio/negocio-public.util';
 
 @Injectable()
 export class ResenaService {
@@ -22,6 +26,7 @@ export class ResenaService {
   private mapResena<T extends Record<string, any>>(resena: T) {
     return {
       ...resena,
+      negocio: mapNegocioPublic(resena.negocio),
       comentario: resena.contenido,
       fecha: resena.creadoEn,
     };
@@ -36,7 +41,7 @@ export class ResenaService {
         puntuacion: true,
         creadoEn: true,
         usuario: { select: { id: true, nombre: true, foto: true } },
-        negocio: { select: { id: true, nombre: true, nenufarColor: true } },
+        negocio: { select: negocioPublicSelect },
       },
       orderBy: { creadoEn: 'desc' },
     });
@@ -54,6 +59,7 @@ export class ResenaService {
         puntuacion: true,
         creadoEn: true,
         usuario: { select: { id: true, nombre: true, foto: true } },
+        negocio: { select: negocioPublicSelect },
       },
       orderBy: { creadoEn: 'desc' },
     });
@@ -70,7 +76,7 @@ export class ResenaService {
         contenido: true,
         puntuacion: true,
         creadoEn: true,
-        negocio: { select: { id: true, nombre: true, nenufarColor: true } },
+        negocio: { select: negocioPublicSelect },
       },
       orderBy: { creadoEn: 'desc' },
     });
@@ -89,7 +95,7 @@ export class ResenaService {
         puntuacion: true,
         creadoEn: true,
         usuario: { select: { id: true, nombre: true, foto: true } },
-        negocio: { select: { id: true, nombre: true, nenufarColor: true } },
+        negocio: { select: negocioPublicSelect },
       },
     });
 

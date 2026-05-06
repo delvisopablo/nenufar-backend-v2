@@ -9,6 +9,7 @@ import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthService } from './auth.service';
 import { EmailService } from '../email/email.service';
+import { NenufarizarService } from '../nenufarizar/nenufarizar.service';
 
 type TransactionCallback = (tx: unknown) => PromiseLike<unknown>;
 
@@ -41,6 +42,9 @@ describe('AuthService', () => {
   let emailService: {
     isEnabled: jest.Mock;
     sendWelcomeEmail: jest.Mock;
+  };
+  let nenufarizarService: {
+    procesarReferido: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -81,6 +85,9 @@ describe('AuthService', () => {
       isEnabled: jest.fn().mockReturnValue(true),
       sendWelcomeEmail: jest.fn(),
     };
+    nenufarizarService = {
+      procesarReferido: jest.fn(),
+    };
 
     prisma.$transaction.mockImplementation((callback: TransactionCallback) =>
       Promise.resolve(
@@ -108,6 +115,10 @@ describe('AuthService', () => {
         {
           provide: EmailService,
           useValue: emailService,
+        },
+        {
+          provide: NenufarizarService,
+          useValue: nenufarizarService,
         },
       ],
     }).compile();
@@ -167,6 +178,7 @@ describe('AuthService', () => {
       }),
     );
     expect(res.cookie).toHaveBeenCalledTimes(2);
+    expect(nenufarizarService.procesarReferido).not.toHaveBeenCalled();
     expect(result).toEqual({
       usuario: expect.objectContaining({
         id: 7,
@@ -201,6 +213,82 @@ describe('AuthService', () => {
         message: 'Email o nickname ya en uso',
       }),
     );
+  });
+
+  it('register procesa el código de referido si viene informado', async () => {
+    prisma.usuario.findFirst.mockResolvedValue(null);
+    prisma.usuario.create.mockResolvedValue({
+      id: 7,
+      nombre: 'Ada',
+      nickname: 'ada',
+      email: 'ada@example.com',
+    });
+    jwtService.signAsync
+      .mockResolvedValueOnce('access-token')
+      .mockResolvedValueOnce('refresh-token');
+    nenufarizarService.procesarReferido.mockResolvedValue(undefined);
+
+    const res = {
+      cookie: jest.fn(),
+    } as any;
+
+    await service.register(
+      {
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        password: 'secret123',
+        codigoReferido: ' nen50 ',
+      },
+      res,
+    );
+
+    expect(nenufarizarService.procesarReferido).toHaveBeenCalledWith(
+      7,
+      'NEN50',
+    );
+  });
+
+  it('register no se rompe si el referido falla y solo lo loguea', async () => {
+    prisma.usuario.findFirst.mockResolvedValue(null);
+    prisma.usuario.create.mockResolvedValue({
+      id: 7,
+      nombre: 'Ada',
+      nickname: 'ada',
+      email: 'ada@example.com',
+    });
+    jwtService.signAsync
+      .mockResolvedValueOnce('access-token')
+      .mockResolvedValueOnce('refresh-token');
+    nenufarizarService.procesarReferido.mockRejectedValue(
+      new Error('invalid code'),
+    );
+    const loggerError = jest
+      .spyOn((service as any).logger, 'error')
+      .mockImplementation(() => undefined);
+
+    const result = await service.register(
+      {
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        password: 'secret123',
+        codigoReferido: 'FAIL01',
+      },
+      { cookie: jest.fn() } as any,
+    );
+
+    expect(result).toEqual({
+      usuario: expect.objectContaining({
+        id: 7,
+        nombre: 'Ada',
+      }),
+    });
+    expect(nenufarizarService.procesarReferido).toHaveBeenCalledWith(
+      7,
+      'FAIL01',
+    );
+    expect(loggerError).toHaveBeenCalled();
   });
 
   it('register devuelve 409 cuando email o nickname ya existen', async () => {
@@ -589,6 +677,73 @@ describe('AuthService', () => {
       }),
     );
     expect(emailService.sendWelcomeEmail).toHaveBeenCalledTimes(1);
+    expect(prisma.usuario.update).toHaveBeenCalledTimes(1);
+    expect(prisma.usuario.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 7 },
+        data: { ultimoLoginEn: expect.any(Date) },
+      }),
+    );
+  });
+
+  it('login sigue funcionando en local cuando RESEND_ENABLED esta desactivado', async () => {
+    emailService.isEnabled.mockReturnValue(false);
+    prisma.usuario.findUnique
+      .mockResolvedValueOnce({
+        id: 7,
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        password: await bcrypt.hash('secret123', 10),
+        foto: null,
+        biografia: 'Bio local',
+        creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+        actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+        emailVerificado: true,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        rolGlobal: RolGlobal.USUARIO,
+        petalosSaldo: 4,
+        negocios: [],
+      })
+      .mockResolvedValueOnce({
+        id: 7,
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        foto: null,
+        biografia: 'Bio local',
+        creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+        actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+        emailVerificado: true,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        rolGlobal: RolGlobal.USUARIO,
+        petalosSaldo: 4,
+        negocios: [],
+      });
+    prisma.usuario.update.mockResolvedValue({});
+    jwtService.signAsync
+      .mockResolvedValueOnce('access-token')
+      .mockResolvedValueOnce('refresh-token');
+
+    const result = await service.login(
+      {
+        email: 'ada@example.com',
+        password: 'secret123',
+      },
+      { cookie: jest.fn() } as any,
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 7,
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        rol: 'usuario',
+      }),
+    );
+    expect(emailService.sendWelcomeEmail).not.toHaveBeenCalled();
+    expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(prisma.usuario.update).toHaveBeenCalledTimes(1);
     expect(prisma.usuario.update).toHaveBeenCalledWith(
       expect.objectContaining({

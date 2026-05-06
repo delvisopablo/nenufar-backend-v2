@@ -22,6 +22,7 @@ import { UpdateNegocioDto } from './dto/update-negocio.dto';
 import { QueryNegocioDto } from './dto/query-negocio.dto';
 import { ConfigHorarioDto } from './dto/config-horario.dto';
 import { ResenaService } from '../reseña/resena.service';
+import { PromocionService } from '../promocion/promocion.service';
 import { CreateNegocioMiembroDto } from './dto/create-negocio-miembro.dto';
 import { UpdateNegocioMiembroDto } from './dto/update-negocio-miembro.dto';
 import { CreateVisitaNegocioDto } from './dto/create-visita-negocio.dto';
@@ -35,6 +36,7 @@ export class NegocioController {
   constructor(
     private service: NegocioService,
     private readonly resenaService: ResenaService,
+    private readonly promocionService: PromocionService,
   ) {}
 
   private getAuthenticatedUserId(req: { user?: { id?: number } }) {
@@ -74,6 +76,11 @@ export class NegocioController {
   @Get(':id/resenas')
   resenas(@Param('id', ParseIntPipe) id: number) {
     return this.resenaService.getResenasPorNegocio(id);
+  }
+
+  @Get(':id/promociones')
+  promociones(@Param('id', ParseIntPipe) id: number) {
+    return this.promocionService.listarPorNegocio(id);
   }
 
   @Get(':id/seguidores')

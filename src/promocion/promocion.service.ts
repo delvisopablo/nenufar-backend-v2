@@ -10,6 +10,10 @@ import { UpdatePromocionDto } from './dto/update-promocion.dto';
 import { ValidarPromocionDto } from './dto/validar-promocion.dto';
 import { LogroEngineService } from '../logro/logro-engine.service';
 import { NotificacionService } from '../notificacion/notificacion.service';
+import {
+  mapNegocioPublic,
+  negocioPublicSelect,
+} from '../negocio/negocio-public.util';
 
 function normalizeOptionalString(value?: string | null) {
   if (value === undefined) return undefined;
@@ -24,6 +28,13 @@ export class PromocionService {
     private readonly notificaciones: NotificacionService,
     private readonly logroEngine: LogroEngineService,
   ) {}
+
+  private mapPromocion<T extends Record<string, any>>(promocion: T) {
+    return {
+      ...promocion,
+      negocio: mapNegocioPublic(promocion.negocio),
+    };
+  }
 
   async crearPromocion(dto: CreatePromocionDto, usuarioId: number) {
     const negocio = await this.prisma.negocio.findUnique({
@@ -126,7 +137,7 @@ export class PromocionService {
   }
 
   async listarActivas() {
-    return this.prisma.promocion.findMany({
+    const promociones = await this.prisma.promocion.findMany({
       where: {
         activa: true,
         fechaCaducidad: { gte: new Date() },
@@ -138,18 +149,49 @@ export class PromocionService {
         tipoDescuento: true,
         fechaCaducidad: true,
         negocio: {
-          select: { id: true, nombre: true, nenufarColor: true },
+          select: negocioPublicSelect,
         },
       },
       orderBy: { fechaCaducidad: 'asc' },
       take: 10,
     });
+
+    return promociones.map((promocion) => this.mapPromocion(promocion));
+  }
+
+  async listarDisponibles() {
+    const promociones = await this.prisma.promocion.findMany({
+      where: {
+        activa: true,
+        fechaCaducidad: {
+          gte: new Date(),
+        },
+      },
+      include: {
+        negocio: {
+          select: negocioPublicSelect,
+        },
+        producto: true,
+        pack: true,
+      },
+    });
+
+    return promociones.map((promocion) => this.mapPromocion(promocion));
   }
 
   async listarPorNegocio(negocioId: number) {
-    return this.prisma.promocion.findMany({
+    const promociones = await this.prisma.promocion.findMany({
       where: { negocioId },
+      include: {
+        negocio: {
+          select: negocioPublicSelect,
+        },
+        producto: true,
+        pack: true,
+      },
     });
+
+    return promociones.map((promocion) => this.mapPromocion(promocion));
   }
 
   async validarPromocion(

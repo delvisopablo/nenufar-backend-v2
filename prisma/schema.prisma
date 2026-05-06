@@ -67,6 +67,7 @@ enum MotivoTx {
   LIKE
   LOGRO
   RESERVA
+  REFERIDO
   OTRO
 }
 
@@ -127,6 +128,7 @@ enum NotificacionTipo {
   POST
   NEGOCIO
   RESENA
+  REFERIDO
   SISTEMA
 }
 
@@ -137,6 +139,8 @@ model Usuario {
   nickname       String       @unique
   email          String       @unique
   password       String
+  codigoReferido String?      @unique
+  referidoPorId  Int?
   foto           String?
   creadoEn       DateTime     @default(now())
   actualizadoEn  DateTime     @updatedAt
@@ -155,26 +159,29 @@ model Usuario {
   petalosTx    PetaloTx[]
 
   // Relaciones
-  negocios        Negocio[]           @relation("DuenoNegocio")
-  resenas         Resena[]
-  reservas        Reserva[]
-  pedidos         Pedido[]
-  compras         Compra[]
-  pagos           Pago[]
-  comentarios     Comentario[]
-  posts           Post[]
-  logrosUsuario   LogroUsuario[]
-  likes           Like[]
-  negocioMiembros NegocioMiembro[]
-  siguiendo       UsuarioSeguimiento[] @relation("UsuarioSeguidor")
-  seguidores      UsuarioSeguimiento[] @relation("UsuarioSeguido")
+  referidoPor      Usuario?            @relation("UsuarioReferidos", fields: [referidoPorId], references: [id])
+  referidos        Usuario[]           @relation("UsuarioReferidos")
+  negocios         Negocio[]           @relation("DuenoNegocio")
+  resenas          Resena[]
+  reservas         Reserva[]
+  pedidos          Pedido[]
+  compras          Compra[]
+  pagos            Pago[]
+  comentarios      Comentario[]
+  posts            Post[]
+  logrosUsuario    LogroUsuario[]
+  likes            Like[]
+  negocioMiembros  NegocioMiembro[]
+  siguiendo        UsuarioSeguimiento[] @relation("UsuarioSeguidor")
+  seguidores       UsuarioSeguimiento[] @relation("UsuarioSeguido")
   siguiendoNegocios NegocioSeguimiento[]
-  visitasNegocio  VisitaNegocio[]
-  notificaciones  Notificacion[]
+  visitasNegocio   VisitaNegocio[]
+  notificaciones   Notificacion[]
 
   @@index([estadoCuenta])
   @@index([rolGlobal])
   @@index([creadoEn])
+  @@index([codigoReferido])
 }
 
 model Categoria {
