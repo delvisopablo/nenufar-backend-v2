@@ -140,7 +140,13 @@ export class PromocionService {
     const promociones = await this.prisma.promocion.findMany({
       where: {
         activa: true,
+        eliminadoEn: null,
+        estado: ContenidoEstado.PUBLICADO,
         fechaCaducidad: { gte: new Date() },
+        negocio: {
+          activo: true,
+          eliminadoEn: null,
+        },
       },
       select: {
         id: true,
@@ -163,8 +169,14 @@ export class PromocionService {
     const promociones = await this.prisma.promocion.findMany({
       where: {
         activa: true,
+        eliminadoEn: null,
+        estado: ContenidoEstado.PUBLICADO,
         fechaCaducidad: {
           gte: new Date(),
+        },
+        negocio: {
+          activo: true,
+          eliminadoEn: null,
         },
       },
       include: {
@@ -182,6 +194,30 @@ export class PromocionService {
   async listarPorNegocio(negocioId: number) {
     const promociones = await this.prisma.promocion.findMany({
       where: { negocioId },
+      include: {
+        negocio: {
+          select: negocioPublicSelect,
+        },
+        producto: true,
+        pack: true,
+      },
+    });
+
+    return promociones.map((promocion) => this.mapPromocion(promocion));
+  }
+
+  async listarPublicasPorNegocio(negocioId: number) {
+    const promociones = await this.prisma.promocion.findMany({
+      where: {
+        negocioId,
+        activa: true,
+        eliminadoEn: null,
+        estado: ContenidoEstado.PUBLICADO,
+        negocio: {
+          activo: true,
+          eliminadoEn: null,
+        },
+      },
       include: {
         negocio: {
           select: negocioPublicSelect,

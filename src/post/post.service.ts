@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  ContenidoEstado,
   LikeTipo,
   MotivoTx,
   PostTipo,
@@ -12,6 +13,21 @@ import {
   RolGlobal,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+
+const postResenaSelect = {
+  id: true,
+  contenido: true,
+  puntuacion: true,
+  estado: true,
+  moderadoEn: true,
+  motivoModeracion: true,
+  selloNenufar: true,
+  usuarioId: true,
+  negocioId: true,
+  creadoEn: true,
+  actualizadoEn: true,
+  eliminadoEn: true,
+} satisfies Prisma.ResenaSelect;
 
 function toPaging(page?: number | string, limit?: number | string) {
   const p = Math.max(1, Number(page ?? 1) | 0);
@@ -42,6 +58,8 @@ export class PostService {
 
     const tipo = this.tipoToEnum(params.tipo);
     let where: Prisma.PostWhereInput = {
+      eliminadoEn: null,
+      estado: ContenidoEstado.PUBLICADO,
       ...(tipo ? { tipo } : {}),
       ...(params.usuarioId ? { usuarioId: params.usuarioId } : {}),
       ...(params.negocioId ? { negocioId: params.negocioId } : {}),
@@ -51,7 +69,7 @@ export class PostService {
     const include: Prisma.PostInclude = {
       usuario: { select: { id: true, nombre: true } },
       _count: { select: { likes: true, comentarios: true } },
-      resena: true,
+      resena: { select: postResenaSelect },
       promocion: true,
       logro: true,
     };
@@ -86,11 +104,15 @@ export class PostService {
   }
 
   async getById(id: number) {
-    const post = await this.prisma.post.findUnique({
-      where: { id },
+    const post = await this.prisma.post.findFirst({
+      where: {
+        id,
+        eliminadoEn: null,
+        estado: ContenidoEstado.PUBLICADO,
+      },
       include: {
         usuario: { select: { id: true, nombre: true, petalosSaldo: true } },
-        resena: true,
+        resena: { select: postResenaSelect },
         promocion: true,
         logro: true,
         _count: { select: { likes: true, comentarios: true } },

@@ -1,10 +1,9 @@
 import {
-  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { MotivoTx, PostTipo } from '@prisma/client';
+import { ContenidoEstado, MotivoTx, PostTipo, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateResenaDto } from './dto/create-resena.dto';
 import { UpdateResenaDto } from './dto/update-resena.dto';
@@ -15,6 +14,25 @@ import {
   negocioPublicSelect,
 } from '../negocio/negocio-public.util';
 
+const resenaPublicSelect = {
+  id: true,
+  contenido: true,
+  puntuacion: true,
+  estado: true,
+  moderadoEn: true,
+  motivoModeracion: true,
+  selloNenufar: true,
+  usuarioId: true,
+  negocioId: true,
+  creadoEn: true,
+  actualizadoEn: true,
+  eliminadoEn: true,
+  usuario: { select: { id: true, nombre: true, foto: true } },
+  negocio: { select: negocioPublicSelect },
+} satisfies Prisma.ResenaSelect;
+
+type ResenaPublicRecord = Prisma.ResenaGetPayload<{ select: typeof resenaPublicSelect }>;
+
 @Injectable()
 export class ResenaService {
   constructor(
@@ -23,7 +41,7 @@ export class ResenaService {
     private readonly logroEngine: LogroEngineService,
   ) {}
 
-  private mapResena<T extends Record<string, any>>(resena: T) {
+  private mapResena(resena: ResenaPublicRecord) {
     return {
       ...resena,
       negocio: mapNegocioPublic(resena.negocio),
@@ -35,14 +53,15 @@ export class ResenaService {
   /** Listado global (paginable si quieres luego) */
   async todasLasResenas() {
     const resenas = await this.prisma.resena.findMany({
-      select: {
-        id: true,
-        contenido: true,
-        puntuacion: true,
-        creadoEn: true,
-        usuario: { select: { id: true, nombre: true, foto: true } },
-        negocio: { select: negocioPublicSelect },
+      where: {
+        eliminadoEn: null,
+        estado: ContenidoEstado.PUBLICADO,
+        negocio: {
+          eliminadoEn: null,
+          activo: true,
+        },
       },
+      select: resenaPublicSelect,
       orderBy: { creadoEn: 'desc' },
     });
 
@@ -52,15 +71,16 @@ export class ResenaService {
   /** Reseñas por negocio */
   async getResenasPorNegocio(negocioId: number) {
     const resenas = await this.prisma.resena.findMany({
-      where: { negocioId },
-      select: {
-        id: true,
-        contenido: true,
-        puntuacion: true,
-        creadoEn: true,
-        usuario: { select: { id: true, nombre: true, foto: true } },
-        negocio: { select: negocioPublicSelect },
+      where: {
+        negocioId,
+        eliminadoEn: null,
+        estado: ContenidoEstado.PUBLICADO,
+        negocio: {
+          eliminadoEn: null,
+          activo: true,
+        },
       },
+      select: resenaPublicSelect,
       orderBy: { creadoEn: 'desc' },
     });
 
@@ -70,14 +90,16 @@ export class ResenaService {
   /** Reseñas por usuario */
   async findByUsuarioId(usuarioId: number) {
     const resenas = await this.prisma.resena.findMany({
-      where: { usuarioId },
-      select: {
-        id: true,
-        contenido: true,
-        puntuacion: true,
-        creadoEn: true,
-        negocio: { select: negocioPublicSelect },
+      where: {
+        usuarioId,
+        eliminadoEn: null,
+        estado: ContenidoEstado.PUBLICADO,
+        negocio: {
+          eliminadoEn: null,
+          activo: true,
+        },
       },
+      select: resenaPublicSelect,
       orderBy: { creadoEn: 'desc' },
     });
 
@@ -88,15 +110,16 @@ export class ResenaService {
   async obtenerUltimas(limit = 10) {
     const resenas = await this.prisma.resena.findMany({
       take: limit,
-      orderBy: { creadoEn: 'desc' },
-      select: {
-        id: true,
-        contenido: true,
-        puntuacion: true,
-        creadoEn: true,
-        usuario: { select: { id: true, nombre: true, foto: true } },
-        negocio: { select: negocioPublicSelect },
+      where: {
+        eliminadoEn: null,
+        estado: ContenidoEstado.PUBLICADO,
+        negocio: {
+          eliminadoEn: null,
+          activo: true,
+        },
       },
+      orderBy: { creadoEn: 'desc' },
+      select: resenaPublicSelect,
     });
 
     return resenas.map((resena) => this.mapResena(resena));
@@ -107,7 +130,10 @@ export class ResenaService {
     const [agg] = await this.prisma.$queryRaw<
       { avg: number | null; count: number }[]
     >`SELECT AVG("puntuacion")::float AS avg, COUNT(*)::int AS count
-       FROM "Resena" WHERE "negocioId" = ${negocioId}`;
+       FROM "Resena"
+       WHERE "negocioId" = ${negocioId}
+         AND "eliminadoEn" IS NULL
+         AND "estado" = 'PUBLICADO'`;
     return {
       negocioId,
       media: agg?.avg ?? 0,
@@ -117,21 +143,20 @@ export class ResenaService {
 
   /** Crear reseña + post + pagar pétalos (+5 autor, +5 dueño si distinto) */
   async crear(userId: number, dto: CreateResenaDto) {
-    const { post, resena } = await this.prisma.$transaction(async (tx) => {
-      const existing = await tx.resena.findFirst({
+    const { postId, resenaId } = await this.prisma.$transaction(async (tx) => {
+      const negocio = await tx.negocio.findFirst({
         where: {
-          usuarioId: userId,
-          negocioId: dto.negocioId,
+          id: dto.negocioId,
+          eliminadoEn: null,
+          activo: true,
         },
-        select: { id: true },
+        select: { duenoId: true },
       });
-      if (existing) {
-        throw new ConflictException(
-          'Ya existe una reseña tuya para este negocio',
-        );
+
+      if (!negocio) {
+        throw new NotFoundException('Negocio no encontrado');
       }
 
-      // crear reseña
       const resena = await tx.resena.create({
         data: {
           negocioId: dto.negocioId,
@@ -140,9 +165,9 @@ export class ResenaService {
           contenido: dto.contenido ?? '',
           selloNenufar: dto.selloNenufar ?? false,
         },
+        select: { id: true },
       });
 
-      // crear post “one-of” apuntando a la reseña
       const post = await tx.post.create({
         data: {
           usuarioId: userId,
@@ -150,9 +175,9 @@ export class ResenaService {
           negocioId: dto.negocioId,
           resenaId: resena.id,
         },
+        select: { id: true },
       });
 
-      // pagar pétalos al autor
       const autor = await tx.usuario.update({
         where: { id: userId },
         data: { petalosSaldo: { increment: 5 } },
@@ -169,20 +194,15 @@ export class ResenaService {
         },
       });
 
-      // pagar al dueño del negocio (si es distinto)
-      const dueno = await tx.negocio.findUnique({
-        where: { id: dto.negocioId },
-        select: { duenoId: true },
-      });
-      if (dueno?.duenoId && dueno.duenoId !== userId) {
+      if (negocio.duenoId && negocio.duenoId !== userId) {
         const saldoDueno = await tx.usuario.update({
-          where: { id: dueno.duenoId },
+          where: { id: negocio.duenoId },
           data: { petalosSaldo: { increment: 5 } },
           select: { petalosSaldo: true },
         });
         await tx.petaloTx.create({
           data: {
-            usuarioId: dueno.duenoId,
+            usuarioId: negocio.duenoId,
             delta: 5,
             saldoResultante: saldoDueno.petalosSaldo,
             motivo: MotivoTx.RESENA_NEGOCIO,
@@ -192,7 +212,7 @@ export class ResenaService {
         });
       }
 
-      return { resena, post };
+      return { resenaId: resena.id, postId: post.id };
     });
 
     void this.notificaciones
@@ -201,8 +221,8 @@ export class ResenaService {
         tipo: 'POST',
         titulo: 'Nuevo post en un negocio que sigues',
         contenido: dto.contenido?.slice(0, 140),
-        link: `/posts/${post.id}`,
-        postId: post.id,
+        link: `/posts/${postId}`,
+        postId,
       })
       .catch(() => undefined);
 
@@ -210,21 +230,33 @@ export class ResenaService {
       .registrarAccion({
         usuarioId: userId,
         accion: 'RESENA_PUBLICADA',
-        refId: resena.id,
+        refId: resenaId,
       })
       .catch(() => undefined);
 
-    return resena;
+    const resena = await this.prisma.resena.findUnique({
+      where: { id: resenaId },
+      select: resenaPublicSelect,
+    });
+
+    if (!resena) {
+      throw new NotFoundException('Reseña no encontrada');
+    }
+
+    return this.mapResena(resena);
   }
 
   /** Actualizar reseña (solo autor) */
   async actualizar(id: number, dto: UpdateResenaDto, userId: number) {
-    const r = await this.prisma.resena.findUnique({ where: { id } });
+    const r = await this.prisma.resena.findUnique({
+      where: { id },
+      select: { id: true, usuarioId: true },
+    });
     if (!r) throw new NotFoundException('Reseña no encontrada');
     if (r.usuarioId !== userId)
       throw new ForbiddenException('No puedes editar esta reseña');
 
-    return this.prisma.resena.update({
+    const updated = await this.prisma.resena.update({
       where: { id },
       data: {
         ...(dto.puntuacion !== undefined ? { puntuacion: dto.puntuacion } : {}),
@@ -233,16 +265,27 @@ export class ResenaService {
           ? { selloNenufar: dto.selloNenufar }
           : {}),
       },
+      select: resenaPublicSelect,
     });
+
+    return this.mapResena(updated);
   }
 
   /** Eliminar reseña (solo autor). No revertimos pétalos. */
   async eliminar(id: number, userId: number) {
-    const r = await this.prisma.resena.findUnique({ where: { id } });
+    const r = await this.prisma.resena.findUnique({
+      where: { id },
+      select: { id: true, usuarioId: true },
+    });
     if (!r) throw new NotFoundException('Reseña no encontrada');
     if (r.usuarioId !== userId)
       throw new ForbiddenException('No puedes borrar esta reseña');
 
-    return this.prisma.resena.delete({ where: { id } });
+    const deleted = await this.prisma.resena.delete({
+      where: { id },
+      select: resenaPublicSelect,
+    });
+
+    return this.mapResena(deleted);
   }
 }

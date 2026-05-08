@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Post, Req, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -7,6 +15,7 @@ import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RegisterNegocioDto } from './dto/register-negocio.dto';
+import { JwtAuthGuard } from './guards/jwt.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -64,8 +73,9 @@ export class AuthController {
     return this.authService.resetPassword(dto);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get('me')
-  async me(@Req() req: Request) {
-    return this.authService.me(req);
+  async me(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    return this.authService.me(req, res);
   }
 }

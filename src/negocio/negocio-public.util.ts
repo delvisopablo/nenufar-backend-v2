@@ -7,6 +7,7 @@ export const negocioPublicSelect = {
   fotoPerfil: true,
   fotoPortada: true,
   nenufarColor: true,
+  nenufarActivo: true,
   nenufarKey: true,
   nenufarAsset: true,
   categoria: {
@@ -21,9 +22,7 @@ export type NegocioPublic = Prisma.NegocioGetPayload<{
   select: typeof negocioPublicSelect;
 }>;
 
-export function mapNegocioPublic(
-  negocio: NegocioPublic | null | undefined,
-) {
+export function mapNegocioPublic(negocio: NegocioPublic | null | undefined) {
   if (!negocio) {
     return negocio;
   }
@@ -32,7 +31,10 @@ export function mapNegocioPublic(
     ...negocio,
     // `slug` es el handle público disponible hoy para negocio.
     nickname: negocio.slug ?? null,
-    // `nenufarAsset` es el campo persistido; mantenemos alias para clientes.
-    nenufarActivo: negocio.nenufarAsset ?? negocio.fotoPerfil ?? null,
+    nenufarActivo:
+      negocio.nenufarActivo ??
+      negocio.nenufarAsset ??
+      negocio.fotoPerfil ??
+      null,
   };
 }

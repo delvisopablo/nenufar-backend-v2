@@ -302,6 +302,10 @@ export class PedidoService {
       throw new BadRequestException('Producto no válido para este pedido');
     }
 
+    if (producto.precio === null) {
+      throw new BadRequestException('El producto no tiene precio disponible');
+    }
+
     const precioUnitario = asDecimal(producto.precio);
     const descuentoAplicado = new Prisma.Decimal(0);
     const subtotal = precioUnitario.mul(dto.cantidad).minus(descuentoAplicado);

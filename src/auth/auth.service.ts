@@ -7,7 +7,7 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { EstadoCuenta, Prisma, RolGlobal } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -24,6 +24,10 @@ import {
   slugifyNegocioNombre,
 } from '../negocio/negocio-slug.util';
 import { NenufarizarService } from '../nenufarizar/nenufarizar.service';
+import { AppError } from '../common/errors/app-error';
+
+// Cambiar a true para hacer obligatorio el código de nenufarización en el registro de negocio
+const CODIGO_NENUFARIZACION_REQUERIDO = false;
 
 type AuthenticatedRequest = Request & {
   user?: {
@@ -31,6 +35,7 @@ type AuthenticatedRequest = Request & {
     sub?: number;
     email?: string;
     nickname?: string;
+    rolGlobal?: RolGlobal;
   };
 };
 
@@ -45,10 +50,11 @@ const authUserSelect = {
   actualizadoEn: true,
   emailVerificado: true,
   estadoCuenta: true,
+  eliminadoEn: true,
   rolGlobal: true,
   petalosSaldo: true,
   negocios: {
-    where: { eliminadoEn: null },
+    where: { activo: true, eliminadoEn: null },
     orderBy: { creadoEn: 'asc' },
     take: 1,
     select: {
@@ -57,6 +63,8 @@ const authUserSelect = {
       slug: true,
       horario: true,
       nenufarColor: true,
+      nenufarActivo: true,
+      nenufarAsset: true,
     },
   },
 } satisfies Prisma.UsuarioSelect;
@@ -66,6 +74,7 @@ const registerUserSelect = {
   nombre: true,
   nickname: true,
   email: true,
+  rolGlobal: true,
 } satisfies Prisma.UsuarioSelect;
 
 const loginUserSelect = {
@@ -80,10 +89,11 @@ const loginUserSelect = {
   actualizadoEn: true,
   emailVerificado: true,
   estadoCuenta: true,
+  eliminadoEn: true,
   rolGlobal: true,
   petalosSaldo: true,
   negocios: {
-    where: { eliminadoEn: null },
+    where: { activo: true, eliminadoEn: null },
     orderBy: { creadoEn: 'asc' },
     take: 1,
     select: {
@@ -91,6 +101,8 @@ const loginUserSelect = {
       nombre: true,
       slug: true,
       horario: true,
+      nenufarActivo: true,
+      nenufarAsset: true,
     },
   },
 } satisfies Prisma.UsuarioSelect;
@@ -108,15 +120,13 @@ type AuthUserRecord = Prisma.UsuarioGetPayload<{
 type RegisterUserRecord = Prisma.UsuarioGetPayload<{
   select: typeof registerUserSelect;
 }>;
-type WelcomeEmailUserRecord = Prisma.UsuarioGetPayload<{
-  select: typeof welcomeEmailUserSelect;
-}>;
 type RegisterNegocioResult = {
   user: {
     id: number;
     nombre: string;
     nickname: string;
     email: string;
+    rolGlobal: RolGlobal;
   };
   negocio: {
     id: number;
@@ -124,11 +134,17 @@ type RegisterNegocioResult = {
     slug: string | null;
     horario: Prisma.JsonValue | null;
     nenufarColor: string | null;
+    nenufarActivo: string | null;
+    nenufarAsset: string | null;
   };
 };
 type OneTimeTokenType = 'verify-email' | 'reset-password';
 type SessionTokenType = 'access' | 'refresh';
-const welcomeEmailLockNamespace = 4042;
+type LoginIdentifier = {
+  raw: string;
+  type: 'email' | 'nickname';
+  value: string;
+};
 
 function parseTTL(s?: string, fallbackSeconds = 900) {
   if (!s) return fallbackSeconds;
@@ -162,6 +178,15 @@ function normalizeOptionalString(value: unknown) {
   return normalized || undefined;
 }
 
+function isDeletedAccount(user: {
+  eliminadoEn?: Date | null;
+  estadoCuenta?: EstadoCuenta | null;
+}) {
+  return (
+    Boolean(user.eliminadoEn) || user.estadoCuenta === EstadoCuenta.ELIMINADA
+  );
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -190,6 +215,94 @@ export class AuthService {
     return options;
   }
 
+  private async getCurrentAuthUser(userId: number) {
+    const user = await this.prisma.usuario.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        nickname: true,
+        estadoCuenta: true,
+        eliminadoEn: true,
+        rolGlobal: true,
+      },
+    });
+
+    if (!user) {
+      throw new UnauthorizedException();
+    }
+
+    if (isDeletedAccount(user)) {
+      throw new UnauthorizedException('Esta cuenta ha sido eliminada.');
+    }
+
+    return user;
+  }
+
+  private resolveLoginIdentifier(dto: LoginDto): LoginIdentifier {
+    const rawIdentifier =
+      normalizeOptionalString(dto.identifier) ??
+      normalizeOptionalString(dto.email) ??
+      normalizeOptionalString(dto.nickname);
+
+    if (!rawIdentifier) {
+      throw new BadRequestException('El email o nickname es obligatorio');
+    }
+
+    if (rawIdentifier.includes('@')) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawIdentifier)) {
+        throw new BadRequestException('El email no es válido');
+      }
+
+      return {
+        raw: rawIdentifier,
+        type: 'email',
+        value: rawIdentifier.toLowerCase(),
+      };
+    }
+
+    return {
+      raw: rawIdentifier,
+      type: 'nickname',
+      value: rawIdentifier,
+    };
+  }
+
+  private maskLoginIdentifier(identifier: string) {
+    const normalized = identifier.trim();
+
+    if (!normalized) {
+      return 'empty';
+    }
+
+    if (normalized.includes('@')) {
+      const [localPart = '', domainPart = ''] = normalized.split('@', 2);
+      const maskedLocal =
+        localPart.length <= 2
+          ? `${localPart.slice(0, 1)}***`
+          : `${localPart.slice(0, 2)}***`;
+      const maskedDomain =
+        domainPart.length <= 2
+          ? `${domainPart.slice(0, 1)}***`
+          : `${domainPart.slice(0, 2)}***`;
+
+      return `${maskedLocal}@${maskedDomain}`;
+    }
+
+    return normalized.length <= 2
+      ? `${normalized.slice(0, 1)}***`
+      : `${normalized.slice(0, 2)}***`;
+  }
+
+  private logFailedLoginAttempt(
+    identifier: LoginIdentifier,
+    reason: 'password_mismatch' | 'user_not_found',
+  ) {
+    this.logger.warn(
+      `[login] intento fallido reason=${reason} via=${identifier.type} identifier=${this.maskLoginIdentifier(identifier.raw)}`,
+    );
+  }
+
   private cookieOpts(ttlSeconds: number): CookieOptions {
     return {
       ...this.getCookieBaseOptions(),
@@ -199,6 +312,16 @@ export class AuthService {
 
   private clearCookieOpts(): CookieOptions {
     return this.getCookieBaseOptions();
+  }
+
+  private clearSessionCookies(res?: Response) {
+    if (!res) {
+      return;
+    }
+
+    const cookieOptions = this.clearCookieOpts();
+    res.clearCookie('access_token', cookieOptions);
+    res.clearCookie('refresh_token', cookieOptions);
   }
 
   // private getJwtSecrets() {
@@ -301,17 +424,28 @@ export class AuthService {
     id: number;
     email: string;
     nickname: string;
+    rolGlobal: RolGlobal;
   }) {
     const { accessSecret, refreshSecret } = this.getJwtSecrets();
     const accessTTL = parseTTL(process.env.JWT_ACCESS_TTL, 900);
     const refreshTTL = parseTTL(process.env.JWT_REFRESH_TTL, 60 * 60 * 24 * 30);
 
     const access = await this.jwt.signAsync(
-      { sub: user.id, email: user.email, nickname: user.nickname },
+      {
+        sub: user.id,
+        email: user.email,
+        nickname: user.nickname,
+        rolGlobal: user.rolGlobal,
+      },
       { secret: accessSecret, expiresIn: accessTTL },
     );
     const refresh = await this.jwt.signAsync(
-      { sub: user.id, email: user.email, nickname: user.nickname },
+      {
+        sub: user.id,
+        email: user.email,
+        nickname: user.nickname,
+        rolGlobal: user.rolGlobal,
+      },
       { secret: refreshSecret, expiresIn: refreshTTL },
     );
     return { access, refresh, accessTTL, refreshTTL };
@@ -370,6 +504,7 @@ export class AuthService {
         sub: number;
         email?: string;
         nickname?: string;
+        rolGlobal?: RolGlobal;
       }>(token, { secret });
     } catch {
       throw new UnauthorizedException('Token inválido');
@@ -382,10 +517,13 @@ export class AuthService {
   ) {
     const requestUserId = Number(req.user?.id ?? req.user?.sub);
     if (Number.isFinite(requestUserId) && requestUserId > 0) {
+      const currentUser = await this.getCurrentAuthUser(requestUserId);
+
       return {
-        id: requestUserId,
-        email: req.user?.email,
-        nickname: req.user?.nickname,
+        id: currentUser.id,
+        email: currentUser.email,
+        nickname: currentUser.nickname,
+        rolGlobal: currentUser.rolGlobal,
       };
     }
 
@@ -398,10 +536,13 @@ export class AuthService {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     const payload = await this.verifySessionToken(token, type);
 
+    const currentUser = await this.getCurrentAuthUser(payload.sub);
+
     return {
-      id: payload.sub,
-      email: payload.email,
-      nickname: payload.nickname,
+      id: currentUser.id,
+      email: currentUser.email,
+      nickname: currentUser.nickname,
+      rolGlobal: currentUser.rolGlobal,
     };
   }
 
@@ -432,11 +573,19 @@ export class AuthService {
       nombre: user.nombre,
       nickname: user.nickname,
       email: user.email,
+      rolGlobal: user.rolGlobal,
     };
   }
 
   private toPublicAuthUser(user: AuthUserRecord) {
-    const negocio = user.negocios[0] ?? null;
+    const negocioRecord = user.negocios[0] ?? null;
+    const negocio = negocioRecord
+      ? {
+          ...negocioRecord,
+          nenufarActivo:
+            negocioRecord.nenufarActivo ?? negocioRecord.nenufarAsset ?? null,
+        }
+      : null;
 
     return {
       id: user.id,
@@ -472,114 +621,47 @@ export class AuthService {
     }
 
     try {
-      let wasAlreadySent = false;
-      let wasSent = false;
-
-      await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-        await tx.$queryRaw`
-          SELECT pg_advisory_xact_lock(${welcomeEmailLockNamespace}::integer, ${userId}::integer)
-        `;
-
-        const user: WelcomeEmailUserRecord | null = await tx.usuario.findUnique(
-          {
-            where: { id: userId },
-            select: welcomeEmailUserSelect,
-          },
-        );
-
-        if (!user) {
-          return;
-        }
-
-        if (user.welcomeEmailSentAt) {
-          wasAlreadySent = true;
-          return;
-        }
-
-        await this.emailService.sendWelcomeEmail(user.email, user.nombre);
-
-        await tx.usuario.update({
-          where: { id: user.id },
-          data: { welcomeEmailSentAt: new Date() },
-        });
-
-        wasSent = true;
+      const user = await this.prisma.usuario.findUnique({
+        where: { id: userId },
+        select: welcomeEmailUserSelect,
       });
 
-      if (wasAlreadySent) {
-        this.logger.log(
-          `Welcome email ya enviado previamente al usuario ${userId}`,
-        );
+      if (!user) {
+        return;
       }
 
-      if (wasSent) {
-        this.logger.log(
-          `Welcome email enviado correctamente al usuario ${userId} y marcado como enviado`,
+      if (user.welcomeEmailSentAt) {
+        this.logger.debug(
+          `Welcome email ya enviado previamente al usuario ${userId}`,
         );
+        return;
       }
+
+      await this.emailService.sendWelcomeEmail(user.email, user.nombre);
+
+      const updateResult = await this.prisma.usuario.updateMany({
+        where: {
+          id: user.id,
+          welcomeEmailSentAt: null,
+        },
+        data: { welcomeEmailSentAt: new Date() },
+      });
+
+      if (updateResult.count === 0) {
+        this.logger.debug(
+          `Welcome email ya enviado previamente al usuario ${userId}`,
+        );
+        return;
+      }
+
+      this.logger.log(
+        `Welcome email enviado correctamente al usuario ${userId}`,
+      );
     } catch (error) {
       this.logger.error(
         `Fallo enviando welcome email al usuario ${userId}. El login continúa y welcomeEmailSentAt no se marca.`,
         error instanceof Error ? error.stack : undefined,
       );
-    }
-  }
-
-  private async findOrCreateCategoriaByName(
-    tx: Prisma.TransactionClient,
-    categoriaNombre: string,
-  ) {
-    const existingCategoria = await tx.categoria.findFirst({
-      where: {
-        nombre: {
-          equals: categoriaNombre,
-          mode: 'insensitive',
-        },
-      },
-      select: {
-        id: true,
-        nombre: true,
-      },
-    });
-
-    if (existingCategoria) {
-      return existingCategoria;
-    }
-
-    try {
-      return await tx.categoria.create({
-        data: {
-          nombre: categoriaNombre,
-        },
-        select: {
-          id: true,
-          nombre: true,
-        },
-      });
-    } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        const categoria = await tx.categoria.findFirst({
-          where: {
-            nombre: {
-              equals: categoriaNombre,
-              mode: 'insensitive',
-            },
-          },
-          select: {
-            id: true,
-            nombre: true,
-          },
-        });
-
-        if (categoria) {
-          return categoria;
-        }
-      }
-
-      throw error;
     }
   }
 
@@ -616,8 +698,9 @@ export class AuthService {
     );
     const normalizedBiografia = normalizeOptionalString(dto.biografia);
     const normalizedFoto = normalizeOptionalString(dto.fotoPerfil);
-    const normalizedCodigoReferido =
-      normalizeOptionalString(dto.codigoReferido)?.toUpperCase();
+    const normalizedCodigoReferido = normalizeOptionalString(
+      dto.codigoReferido,
+    )?.toUpperCase();
 
     const exists = await this.prisma.usuario.findFirst({
       where: {
@@ -669,6 +752,7 @@ export class AuthService {
         id: user.id,
         email: user.email,
         nickname: user.nickname,
+        rolGlobal: user.rolGlobal,
       });
 
       this.setSessionCookies(res, tokens);
@@ -698,7 +782,7 @@ export class AuthService {
 
   async registerNegocio(dto: RegisterNegocioDto, res: Response) {
     const normalizedOwnerName = normalizeRequiredString(
-      dto.nombreDueno,
+      dto.nombre ?? dto.nombreDueno ?? dto['nombreDueño'],
       'El nombre del dueño',
     );
     const normalizedNickname = normalizeRequiredString(
@@ -713,31 +797,45 @@ export class AuthService {
       dto.nombreNegocio,
       'El nombre del negocio',
     );
-    const normalizedCategoriaNombre = normalizeRequiredString(
-      dto.categoriaNombre,
-      'La categoría',
-    );
+    const requestedBusinessSlug = dto.slug ?? dto.nicknameNegocio;
     const normalizedDireccion = normalizeOptionalString(dto.direccion);
-    const normalizedHistoria = normalizeOptionalString(dto.historia);
-    const fechaFundacion = new Date(dto.fechaFundacion);
+    const normalizedHistoria = normalizeOptionalString(
+      dto.historia ?? dto.descripcion ?? dto.biografia,
+    );
+    const normalizedNenufarActivo = normalizeOptionalString(
+      dto.nenufarActivo ?? dto.nenufarAsset,
+    );
+    const normalizedCodigo = normalizeOptionalString(
+      dto.codigoNenufarizacion,
+    )?.toUpperCase();
 
-    if (Number.isNaN(fechaFundacion.getTime())) {
+    const fechaFundacion = dto.fechaFundacion
+      ? new Date(dto.fechaFundacion)
+      : new Date();
+
+    if (dto.fechaFundacion && Number.isNaN(fechaFundacion.getTime())) {
       throw new BadRequestException('La fecha de fundación no es válida');
     }
 
-    const exists = await this.prisma.usuario.findFirst({
-      where: {
-        OR: [{ email: normalizedEmail }, { nickname: normalizedNickname }],
-      },
-      select: {
-        id: true,
-        email: true,
-        nickname: true,
-      },
+    // Verificar email y nickname por separado para códigos de error específicos
+    const emailExists = await this.prisma.usuario.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true },
     });
+    if (emailExists) {
+      throw new AppError('EMAIL_YA_EXISTE', 'El email ya está en uso', 409);
+    }
 
-    if (exists) {
-      throw new ConflictException('Email o nickname ya en uso');
+    const nicknameExists = await this.prisma.usuario.findFirst({
+      where: { nickname: { equals: normalizedNickname, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    if (nicknameExists) {
+      throw new AppError(
+        'NICKNAME_YA_EXISTE',
+        'El nickname ya está en uso',
+        409,
+      );
     }
 
     const hash = await bcrypt.hash(dto.password, 10);
@@ -745,12 +843,68 @@ export class AuthService {
     try {
       const result = await this.prisma.$transaction<RegisterNegocioResult>(
         async (tx) => {
-          const categoria = await this.findOrCreateCategoriaByName(
-            tx,
-            normalizedCategoriaNombre,
-          );
-          const negocioSlug = dto.slug?.trim()
-            ? await this.resolveRequestedBusinessSlug(tx, dto.slug)
+          // Validar categoría por ID
+          const categoria = await tx.categoria.findUnique({
+            where: { id: dto.categoriaId },
+            select: { id: true },
+          });
+          if (!categoria) {
+            throw new AppError(
+              'CATEGORIA_INVALIDA',
+              'La categoría indicada no existe',
+              400,
+            );
+          }
+
+          // Validar subcategoría si se informa
+          if (dto.subcategoriaId) {
+            const sub = await tx.subcategoria.findFirst({
+              where: {
+                id: dto.subcategoriaId,
+                categoriaId: dto.categoriaId,
+              },
+              select: { id: true },
+            });
+            if (!sub) {
+              throw new AppError(
+                'SUBCATEGORIA_INVALIDA',
+                'La subcategoría no pertenece a la categoría indicada',
+                400,
+              );
+            }
+          }
+
+          // Validar código de nenufarización
+          if (normalizedCodigo || CODIGO_NENUFARIZACION_REQUERIDO) {
+            if (!normalizedCodigo) {
+              throw new AppError(
+                'CODIGO_NENUFARIZACION_INVALIDO',
+                'El código de nenufarización es obligatorio',
+                400,
+              );
+            }
+            const codigoRecord = await tx.codigoNenufarizacion.findUnique({
+              where: { codigo: normalizedCodigo },
+              select: { activo: true, usado: true },
+            });
+            if (!codigoRecord || !codigoRecord.activo) {
+              throw new AppError(
+                'CODIGO_NENUFARIZACION_INVALIDO',
+                'Código no válido o no activo',
+                400,
+              );
+            }
+            if (codigoRecord.usado) {
+              throw new AppError(
+                'CODIGO_NENUFARIZACION_USADO',
+                'El código ya ha sido utilizado',
+                400,
+              );
+            }
+          }
+
+          const negocioSlug = requestedBusinessSlug?.trim()
+            ? await this.resolveRequestedBusinessSlug(tx, requestedBusinessSlug)
             : await generateUniqueNegocioSlug(tx, normalizedBusinessName);
 
           const user = await tx.usuario.create({
@@ -766,6 +920,7 @@ export class AuthService {
               nombre: true,
               nickname: true,
               email: true,
+              rolGlobal: true,
             },
           });
 
@@ -776,7 +931,16 @@ export class AuthService {
               historia: normalizedHistoria,
               direccion: normalizedDireccion,
               fechaFundacion,
-              categoriaId: categoria.id,
+              categoriaId: dto.categoriaId,
+              ...(dto.subcategoriaId
+                ? { subcategoriaId: dto.subcategoriaId }
+                : {}),
+              ...(normalizedNenufarActivo
+                ? {
+                    nenufarActivo: normalizedNenufarActivo,
+                    nenufarAsset: normalizedNenufarActivo,
+                  }
+                : {}),
               duenoId: user.id,
             },
             select: {
@@ -785,6 +949,8 @@ export class AuthService {
               slug: true,
               horario: true,
               nenufarColor: true,
+              nenufarActivo: true,
+              nenufarAsset: true,
             },
           });
 
@@ -796,6 +962,14 @@ export class AuthService {
             },
           });
 
+          // Marcar código como usado tras registro exitoso
+          if (normalizedCodigo) {
+            await tx.codigoNenufarizacion.update({
+              where: { codigo: normalizedCodigo },
+              data: { usado: true, usadoEn: new Date() },
+            });
+          }
+
           return { user, negocio };
         },
       );
@@ -804,6 +978,7 @@ export class AuthService {
         id: result.user.id,
         email: result.user.email,
         nickname: result.user.nickname,
+        rolGlobal: result.user.rolGlobal,
       });
 
       this.setSessionCookies(res, tokens);
@@ -815,15 +990,34 @@ export class AuthService {
           nombre: result.user.nombre,
           nickname: result.user.nickname,
           email: result.user.email,
+          rolGlobal: result.user.rolGlobal,
           rol: 'negocio',
-          negocio: result.negocio,
+          negocio: {
+            ...result.negocio,
+            nenufarActivo:
+              result.negocio.nenufarActivo ?? result.negocio.nenufarAsset,
+          },
         },
       };
     } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
+        const targets = (error.meta?.target as string[]) ?? [];
+        if (targets.includes('email')) {
+          throw new AppError('EMAIL_YA_EXISTE', 'El email ya está en uso', 409);
+        }
+        if (targets.includes('nickname')) {
+          throw new AppError(
+            'NICKNAME_YA_EXISTE',
+            'El nickname ya está en uso',
+            409,
+          );
+        }
         throw new ConflictException('Email o nickname ya en uso');
       }
 
@@ -832,21 +1026,43 @@ export class AuthService {
   }
 
   async login(dto: LoginDto, res: Response) {
-    const email = normalizeRequiredString(dto.email, 'El email').toLowerCase();
-    const user = await this.prisma.usuario.findUnique({
-      where: { email },
-      select: loginUserSelect,
-    });
+    const identifier = this.resolveLoginIdentifier(dto);
+    const user =
+      identifier.type === 'email'
+        ? await this.prisma.usuario.findUnique({
+            where: { email: identifier.value },
+            select: loginUserSelect,
+          })
+        : await this.prisma.usuario.findFirst({
+            where: {
+              nickname: {
+                equals: identifier.value,
+                mode: 'insensitive',
+              },
+            },
+            select: loginUserSelect,
+          });
 
-    if (!user) throw new UnauthorizedException('Credenciales inválidas');
+    if (!user) {
+      this.logFailedLoginAttempt(identifier, 'user_not_found');
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
+
+    if (isDeletedAccount(user)) {
+      throw new UnauthorizedException('Esta cuenta ha sido eliminada.');
+    }
 
     const ok = await bcrypt.compare(dto.password, user.password);
-    if (!ok) throw new UnauthorizedException('Credenciales inválidas');
+    if (!ok) {
+      this.logFailedLoginAttempt(identifier, 'password_mismatch');
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
 
     const tokens = await this.signTokens({
       id: user.id,
       email: user.email,
       nickname: user.nickname,
+      rolGlobal: user.rolGlobal,
     });
 
     this.setSessionCookies(res, tokens, 'login');
@@ -860,49 +1076,65 @@ export class AuthService {
 
     await this.sendWelcomeEmailIfNeeded(user.id);
 
-    return (
-      (await this.getPublicAuthUserById(user.id)) ?? {
-        id: user.id,
-        nombre: user.nombre,
-        nickname: user.nickname,
-        email: user.email,
-      }
-    );
+    const publicUser = (await this.getPublicAuthUserById(user.id)) ?? {
+      id: user.id,
+      nombre: user.nombre,
+      nickname: user.nickname,
+      email: user.email,
+    };
+
+    return {
+      access_token: tokens.access,
+      ...publicUser,
+    };
   }
 
   async refresh(req: AuthenticatedRequest, res: Response) {
-    const payload = await this.resolveRequestUser(req, 'refresh');
-    if (!payload.email || !payload.nickname) {
-      throw new UnauthorizedException();
+    try {
+      const payload = await this.resolveRequestUser(req, 'refresh');
+      if (!payload.email || !payload.nickname) {
+        throw new UnauthorizedException();
+      }
+
+      const tokens = await this.signTokens({
+        id: payload.id,
+        email: payload.email,
+        nickname: payload.nickname,
+        rolGlobal: payload.rolGlobal,
+      });
+
+      this.setSessionCookies(res, tokens, 'refresh');
+
+      return { ok: true };
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        this.clearSessionCookies(res);
+      }
+      throw error;
     }
-
-    const tokens = await this.signTokens({
-      id: payload.id,
-      email: payload.email,
-      nickname: payload.nickname,
-    });
-
-    this.setSessionCookies(res, tokens, 'refresh');
-
-    return { ok: true };
   }
 
   logout(res: Response) {
-    const cookieOptions = this.clearCookieOpts();
-    res.clearCookie('access_token', cookieOptions);
-    res.clearCookie('refresh_token', cookieOptions);
+    this.clearSessionCookies(res);
     return { ok: true };
   }
 
-  async me(req: AuthenticatedRequest) {
-    const payload = await this.resolveRequestUser(req, 'access');
-    const user = await this.getPublicAuthUserById(payload.id);
+  async me(req: AuthenticatedRequest, res?: Response) {
+    try {
+      const payload = await this.resolveRequestUser(req, 'access');
+      const user = await this.getPublicAuthUserById(payload.id);
 
-    if (!user) {
-      throw new UnauthorizedException();
+      if (!user) {
+        throw new UnauthorizedException();
+      }
+
+      return user;
+    } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        this.clearSessionCookies(res);
+      }
+      throw error;
     }
-
-    return user;
   }
 
   async verifyEmail(dto: VerifyEmailDto) {

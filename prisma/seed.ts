@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 const PASSWORD = 'Nenufar123!';
+const DEV_ADMIN_PASSWORD = 'admin1234';
 
 function dateDaysFromNow(days: number, hour = 12, minute = 0) {
   const d = new Date();
@@ -26,6 +27,7 @@ function decimal(value: string | number) {
 async function limpiarBaseDeDatos() {
   console.log('Limpiando base de datos...');
 
+  await prisma.adminLog.deleteMany();
   await prisma.like.deleteMany();
   await prisma.comentario.deleteMany();
   await prisma.notificacion.deleteMany();
@@ -64,17 +66,19 @@ async function main() {
   await limpiarBaseDeDatos();
 
   const passwordHash = await bcrypt.hash(PASSWORD, 10);
+  const adminPasswordHash = await bcrypt.hash(DEV_ADMIN_PASSWORD, 10);
 
   console.log('Creando usuarios...');
 
   const admin = await prisma.usuario.create({
     data: {
-      nombre: 'Pablo Admin',
-      nickname: 'pablo_admin',
-      email: 'pablo@minenufar.com',
-      password: passwordHash,
+      nombre: 'Admin Nenufar',
+      nickname: 'admin',
+      email: 'admin@minenufar.com',
+      password: adminPasswordHash,
       foto: 'https://i.pravatar.cc/300?img=12',
-      biografia: 'Administrador de Nenúfar. Probando que todo vaya fino.',
+      biografia:
+        'Administrador de desarrollo de Nenufar. No usar estas credenciales en producción.',
       emailVerificado: true,
       verificadoEn: new Date(),
       ultimoLoginEn: dateDaysAgo(1),

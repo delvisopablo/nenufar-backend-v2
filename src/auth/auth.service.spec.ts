@@ -1,7 +1,11 @@
 /// <reference types="jest" />
 /* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { EstadoCuenta, Prisma, RolGlobal } from '@prisma/client';
 import { JwtService } from '@nestjs/jwt';
@@ -19,7 +23,15 @@ describe('AuthService', () => {
     $transaction: jest.Mock;
     categoria: {
       findFirst: jest.Mock;
+      findUnique: jest.Mock;
       create: jest.Mock;
+    };
+    subcategoria: {
+      findFirst: jest.Mock;
+    };
+    codigoNenufarizacion: {
+      findUnique: jest.Mock;
+      update: jest.Mock;
     };
     negocio: {
       findUnique: jest.Mock;
@@ -33,6 +45,7 @@ describe('AuthService', () => {
       findUnique: jest.Mock;
       create: jest.Mock;
       update: jest.Mock;
+      updateMany: jest.Mock;
     };
   };
   let jwtService: {
@@ -59,7 +72,15 @@ describe('AuthService', () => {
       $transaction: jest.fn(),
       categoria: {
         findFirst: jest.fn(),
+        findUnique: jest.fn(),
         create: jest.fn(),
+      },
+      subcategoria: {
+        findFirst: jest.fn(),
+      },
+      codigoNenufarizacion: {
+        findUnique: jest.fn(),
+        update: jest.fn(),
       },
       negocio: {
         findUnique: jest.fn(),
@@ -73,6 +94,7 @@ describe('AuthService', () => {
         findUnique: jest.fn(),
         create: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn(),
       },
     };
 
@@ -92,8 +114,9 @@ describe('AuthService', () => {
     prisma.$transaction.mockImplementation((callback: TransactionCallback) =>
       Promise.resolve(
         callback({
-          $queryRaw: jest.fn(),
           categoria: prisma.categoria,
+          subcategoria: prisma.subcategoria,
+          codigoNenufarizacion: prisma.codigoNenufarizacion,
           negocio: prisma.negocio,
           negocioMiembro: prisma.negocioMiembro,
           usuario: prisma.usuario,
@@ -137,6 +160,7 @@ describe('AuthService', () => {
       nombre: 'Ada',
       nickname: 'ada',
       email: 'ada@example.com',
+      rolGlobal: RolGlobal.USUARIO,
     });
     jwtService.signAsync
       .mockResolvedValueOnce('access-token')
@@ -222,6 +246,7 @@ describe('AuthService', () => {
       nombre: 'Ada',
       nickname: 'ada',
       email: 'ada@example.com',
+      rolGlobal: RolGlobal.USUARIO,
     });
     jwtService.signAsync
       .mockResolvedValueOnce('access-token')
@@ -256,6 +281,7 @@ describe('AuthService', () => {
       nombre: 'Ada',
       nickname: 'ada',
       email: 'ada@example.com',
+      rolGlobal: RolGlobal.USUARIO,
     });
     jwtService.signAsync
       .mockResolvedValueOnce('access-token')
@@ -311,17 +337,20 @@ describe('AuthService', () => {
   });
 
   it('registerNegocio crea usuario y negocio, inicia sesion y devuelve access_token', async () => {
+    // email check (findUnique): no existe → null; luego getPublicAuthUserById → null (fallback)
+    prisma.usuario.findUnique.mockResolvedValue(null);
+    // nickname check (findFirst): no existe → null
     prisma.usuario.findFirst.mockResolvedValue(null);
-    prisma.categoria.findFirst.mockResolvedValue({
-      id: 3,
-      nombre: 'Hosteleria',
-    });
+    // categoria existe por ID
+    prisma.categoria.findUnique.mockResolvedValue({ id: 3 });
+    // slug generado: negocio.findUnique → null (slug libre)
     prisma.negocio.findUnique.mockResolvedValue(null);
     prisma.usuario.create.mockResolvedValue({
       id: 11,
       nombre: 'Pablo',
       nickname: 'pablo',
       email: 'pablo@example.com',
+      rolGlobal: RolGlobal.USUARIO,
     });
     prisma.negocio.create.mockResolvedValue({
       id: 25,
@@ -329,6 +358,8 @@ describe('AuthService', () => {
       slug: 'cafe-nenufar',
       horario: null,
       nenufarColor: null,
+      nenufarActivo: 'nenufar-loto-rosa',
+      nenufarAsset: 'nenufar-loto-rosa',
     });
     prisma.negocioMiembro.create.mockResolvedValue({});
     jwtService.signAsync
@@ -346,23 +377,27 @@ describe('AuthService', () => {
         email: 'pablo@example.com',
         password: 'secret123',
         nombreNegocio: 'Cafe Nenufar',
-        categoriaNombre: 'Hosteleria',
+        categoriaId: 3,
         fechaFundacion: '2024-01-10',
         direccion: 'Calle Mayor 1',
         historia: 'Cafe de especialidad',
+        nenufarActivo: 'nenufar-loto-rosa',
+        codigoNenufarizacion: '   ',
       },
       res,
     );
 
+    expect(prisma.usuario.findUnique).toHaveBeenCalledWith({
+      where: { email: 'pablo@example.com' },
+      select: { id: true },
+    });
     expect(prisma.usuario.findFirst).toHaveBeenCalledWith({
-      where: {
-        OR: [{ email: 'pablo@example.com' }, { nickname: 'pablo' }],
-      },
-      select: {
-        id: true,
-        email: true,
-        nickname: true,
-      },
+      where: { nickname: { equals: 'pablo', mode: 'insensitive' } },
+      select: { id: true },
+    });
+    expect(prisma.categoria.findUnique).toHaveBeenCalledWith({
+      where: { id: 3 },
+      select: { id: true },
     });
     expect(prisma.negocioMiembro.create).toHaveBeenCalledWith({
       data: {
@@ -376,6 +411,9 @@ describe('AuthService', () => {
         nombre: 'Cafe Nenufar',
         slug: 'cafe-nenufar',
         duenoId: 11,
+        categoriaId: 3,
+        nenufarActivo: 'nenufar-loto-rosa',
+        nenufarAsset: 'nenufar-loto-rosa',
       }),
       select: {
         id: true,
@@ -383,8 +421,12 @@ describe('AuthService', () => {
         slug: true,
         horario: true,
         nenufarColor: true,
+        nenufarActivo: true,
+        nenufarAsset: true,
       },
     });
+    expect(prisma.codigoNenufarizacion.findUnique).not.toHaveBeenCalled();
+    expect(prisma.codigoNenufarizacion.update).not.toHaveBeenCalled();
     expect(res.cookie).toHaveBeenCalledTimes(2);
     expect(result).toEqual({
       access_token: 'business-access-token',
@@ -393,6 +435,7 @@ describe('AuthService', () => {
         nombre: 'Pablo',
         nickname: 'pablo',
         email: 'pablo@example.com',
+        rolGlobal: RolGlobal.USUARIO,
         rol: 'negocio',
         negocio: {
           id: 25,
@@ -400,12 +443,47 @@ describe('AuthService', () => {
           slug: 'cafe-nenufar',
           horario: null,
           nenufarColor: null,
+          nenufarActivo: 'nenufar-loto-rosa',
+          nenufarAsset: 'nenufar-loto-rosa',
         },
       },
     });
   });
 
+  it('registerNegocio devuelve error claro cuando el código de nenufarización es inválido', async () => {
+    prisma.usuario.findUnique.mockResolvedValue(null);
+    prisma.usuario.findFirst.mockResolvedValue(null);
+    prisma.categoria.findUnique.mockResolvedValue({ id: 3 });
+    prisma.codigoNenufarizacion.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.registerNegocio(
+        {
+          nombreDueno: 'Pablo',
+          nickname: 'pablo',
+          email: 'pablo@example.com',
+          password: 'secret123',
+          nombreNegocio: 'Cafe Nenufar',
+          categoriaId: 3,
+          codigoNenufarizacion: 'BAD-CODE',
+        },
+        { cookie: jest.fn() } as any,
+      ),
+    ).rejects.toMatchObject({
+      code: 'CODIGO_NENUFARIZACION_INVALIDO',
+      message: 'Código no válido o no activo',
+      statusCode: 400,
+    });
+
+    expect(prisma.usuario.create).not.toHaveBeenCalled();
+    expect(prisma.negocio.create).not.toHaveBeenCalled();
+  });
+
   it('login devuelve 401 si la contraseña no coincide', async () => {
+    const warnSpy = jest
+      .spyOn(Logger.prototype, 'warn')
+      .mockImplementation(() => undefined);
+
     prisma.usuario.findUnique.mockResolvedValue({
       id: 7,
       nombre: 'Ada',
@@ -446,6 +524,103 @@ describe('AuthService', () => {
     });
 
     await expect(promise).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('reason=password_mismatch'),
+    );
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('wrong-pass'),
+    );
+
+    warnSpy.mockRestore();
+  });
+
+  it('login acepta nickname además de email', async () => {
+    prisma.usuario.findFirst.mockResolvedValue({
+      id: 7,
+      nombre: 'Ada',
+      nickname: 'ada',
+      email: 'ada@example.com',
+      password: await bcrypt.hash('secret123', 10),
+      foto: null,
+      biografia: null,
+      creadoEn: new Date(),
+      actualizadoEn: new Date(),
+      emailVerificado: false,
+      estadoCuenta: EstadoCuenta.ACTIVA,
+      rolGlobal: RolGlobal.USUARIO,
+      petalosSaldo: 0,
+      negocios: [],
+    });
+    prisma.usuario.update.mockResolvedValue({});
+    jwtService.signAsync
+      .mockResolvedValueOnce('access-token')
+      .mockResolvedValueOnce('refresh-token');
+
+    const result = await service.login(
+      {
+        nickname: 'Ada',
+        password: 'secret123',
+      },
+      { cookie: jest.fn() } as any,
+    );
+
+    expect(prisma.usuario.findFirst).toHaveBeenCalledWith({
+      where: {
+        nickname: {
+          equals: 'Ada',
+          mode: 'insensitive',
+        },
+      },
+      select: expect.objectContaining({
+        id: true,
+        nombre: true,
+        nickname: true,
+        email: true,
+        password: true,
+      }),
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        access_token: 'access-token',
+        id: 7,
+        nickname: 'ada',
+        email: 'ada@example.com',
+      }),
+    );
+  });
+
+  it('login bloquea cuentas eliminadas con un error claro', async () => {
+    prisma.usuario.findUnique.mockResolvedValue({
+      id: 7,
+      nombre: 'Ada',
+      nickname: 'ada',
+      email: 'ada@example.com',
+      password: await bcrypt.hash('secret123', 10),
+      foto: null,
+      biografia: null,
+      creadoEn: new Date(),
+      actualizadoEn: new Date(),
+      emailVerificado: true,
+      estadoCuenta: EstadoCuenta.ELIMINADA,
+      eliminadoEn: new Date(),
+      rolGlobal: RolGlobal.USUARIO,
+      petalosSaldo: 0,
+      negocios: [],
+    });
+
+    await expect(
+      service.login(
+        {
+          email: 'ada@example.com',
+          password: 'secret123',
+        },
+        { cookie: jest.fn() } as any,
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: 'Esta cuenta ha sido eliminada.',
+      }),
+    );
   });
 
   it('login envía el welcome email una sola vez y lo marca al enviarse bien', async () => {
@@ -498,6 +673,7 @@ describe('AuthService', () => {
         negocios: [],
       });
     prisma.usuario.update.mockResolvedValue({});
+    prisma.usuario.updateMany.mockResolvedValue({ count: 1 });
     jwtService.signAsync
       .mockResolvedValueOnce('access-token')
       .mockResolvedValueOnce('refresh-token');
@@ -525,15 +701,15 @@ describe('AuthService', () => {
         data: { ultimoLoginEn: expect.any(Date) },
       }),
     );
-    expect(prisma.usuario.update).toHaveBeenNthCalledWith(
-      2,
+    expect(prisma.usuario.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 7 },
+        where: { id: 7, welcomeEmailSentAt: null },
         data: { welcomeEmailSentAt: expect.any(Date) },
       }),
     );
     expect(result).toEqual(
       expect.objectContaining({
+        access_token: 'access-token',
         id: 7,
         nombre: 'Ada',
         nickname: 'ada',
@@ -595,6 +771,7 @@ describe('AuthService', () => {
         welcomeEmailSentAt: new Date('2026-04-01T10:00:00.000Z'),
       });
     prisma.usuario.update.mockResolvedValue({});
+    prisma.usuario.updateMany.mockResolvedValue({ count: 0 });
     jwtService.signAsync
       .mockResolvedValueOnce('access-token')
       .mockResolvedValueOnce('refresh-token');
@@ -609,6 +786,7 @@ describe('AuthService', () => {
 
     expect(emailService.sendWelcomeEmail).not.toHaveBeenCalled();
     expect(prisma.usuario.update).toHaveBeenCalledTimes(1);
+    expect(prisma.usuario.updateMany).not.toHaveBeenCalled();
   });
 
   it('login no se rompe si falla el envío del welcome email y no marca el campo', async () => {
@@ -651,6 +829,7 @@ describe('AuthService', () => {
         negocios: [],
       });
     prisma.usuario.update.mockResolvedValue({});
+    prisma.usuario.updateMany.mockResolvedValue({ count: 1 });
     jwtService.signAsync
       .mockResolvedValueOnce('access-token')
       .mockResolvedValueOnce('refresh-token');
@@ -678,6 +857,7 @@ describe('AuthService', () => {
     );
     expect(emailService.sendWelcomeEmail).toHaveBeenCalledTimes(1);
     expect(prisma.usuario.update).toHaveBeenCalledTimes(1);
+    expect(prisma.usuario.updateMany).not.toHaveBeenCalled();
     expect(prisma.usuario.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 7 },
@@ -721,6 +901,7 @@ describe('AuthService', () => {
         negocios: [],
       });
     prisma.usuario.update.mockResolvedValue({});
+    prisma.usuario.updateMany.mockResolvedValue({ count: 1 });
     jwtService.signAsync
       .mockResolvedValueOnce('access-token')
       .mockResolvedValueOnce('refresh-token');
@@ -745,6 +926,7 @@ describe('AuthService', () => {
     expect(emailService.sendWelcomeEmail).not.toHaveBeenCalled();
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(prisma.usuario.update).toHaveBeenCalledTimes(1);
+    expect(prisma.usuario.updateMany).not.toHaveBeenCalled();
     expect(prisma.usuario.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 7 },
@@ -765,6 +947,7 @@ describe('AuthService', () => {
       actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
       emailVerificado: true,
       estadoCuenta: EstadoCuenta.ACTIVA,
+      eliminadoEn: null,
       rolGlobal: RolGlobal.USUARIO,
       petalosSaldo: 8,
       negocios: [{ id: 3, nombre: 'Cafe Demo' }],
@@ -796,6 +979,15 @@ describe('AuthService', () => {
       sub: 12,
       email: 'ada@example.com',
       nickname: 'ada',
+      rolGlobal: RolGlobal.USUARIO,
+    });
+    prisma.usuario.findUnique.mockResolvedValue({
+      id: 12,
+      email: 'ada@example.com',
+      nickname: 'ada',
+      rolGlobal: RolGlobal.USUARIO,
+      estadoCuenta: EstadoCuenta.ACTIVA,
+      eliminadoEn: null,
     });
     jwtService.signAsync
       .mockResolvedValueOnce('new-access-token')
@@ -884,22 +1076,33 @@ describe('AuthService', () => {
       sub: 9,
       email: 'demo@example.com',
       nickname: 'demo',
-    });
-    prisma.usuario.findUnique.mockResolvedValue({
-      id: 9,
-      nombre: 'Negocio Demo',
-      nickname: 'demo',
-      email: 'demo@example.com',
-      foto: 'avatar.png',
-      biografia: 'Hola',
-      creadoEn: new Date('2026-01-01T00:00:00.000Z'),
-      actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
-      emailVerificado: true,
-      estadoCuenta: EstadoCuenta.ACTIVA,
       rolGlobal: RolGlobal.USUARIO,
-      petalosSaldo: 8,
-      negocios: [{ id: 3, nombre: 'Cafe Demo' }],
     });
+    prisma.usuario.findUnique
+      .mockResolvedValueOnce({
+        id: 9,
+        email: 'demo@example.com',
+        nickname: 'demo',
+        rolGlobal: RolGlobal.USUARIO,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        eliminadoEn: null,
+      })
+      .mockResolvedValueOnce({
+        id: 9,
+        nombre: 'Negocio Demo',
+        nickname: 'demo',
+        email: 'demo@example.com',
+        foto: 'avatar.png',
+        biografia: 'Hola',
+        creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+        actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+        emailVerificado: true,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        eliminadoEn: null,
+        rolGlobal: RolGlobal.USUARIO,
+        petalosSaldo: 8,
+        negocios: [{ id: 3, nombre: 'Cafe Demo' }],
+      });
 
     const result = await service.me({
       cookies: {
@@ -918,6 +1121,48 @@ describe('AuthService', () => {
         email: 'demo@example.com',
         biografia: 'Hola',
         foto_perfil: 'avatar.png',
+      }),
+    );
+  });
+
+  it('me limpia cookies y devuelve 401 si la cuenta fue eliminada', async () => {
+    const res = {
+      clearCookie: jest.fn(),
+    } as any;
+    prisma.usuario.findUnique.mockResolvedValue({
+      id: 9,
+      email: 'demo@example.com',
+      nickname: 'demo',
+      rolGlobal: RolGlobal.USUARIO,
+      estadoCuenta: EstadoCuenta.ELIMINADA,
+      eliminadoEn: new Date(),
+    });
+
+    await expect(
+      service.me(
+        {
+          user: {
+            id: 9,
+          },
+        } as any,
+        res,
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        message: 'Esta cuenta ha sido eliminada.',
+      }),
+    );
+
+    expect(res.clearCookie).toHaveBeenCalledWith(
+      'access_token',
+      expect.objectContaining({
+        httpOnly: true,
+      }),
+    );
+    expect(res.clearCookie).toHaveBeenCalledWith(
+      'refresh_token',
+      expect.objectContaining({
+        httpOnly: true,
       }),
     );
   });

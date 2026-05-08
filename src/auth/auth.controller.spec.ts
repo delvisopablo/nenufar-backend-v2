@@ -1,6 +1,8 @@
+import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { JwtAuthGuard } from './guards/jwt.guard';
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -27,5 +29,14 @@ describe('AuthController', () => {
 
   it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
+
+  it('GET /auth/me usa JwtAuthGuard', () => {
+    const guards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      AuthController.prototype.me,
+    ) as unknown[] | undefined;
+
+    expect(guards).toContain(JwtAuthGuard);
   });
 });

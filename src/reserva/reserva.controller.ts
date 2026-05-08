@@ -14,12 +14,14 @@ import {
   Query,
   Req,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import { ReservaService } from './reserva.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
 import { UpdateReservaEstadoDto } from './dto/update-reserva-estado.dto';
 import { QueryNegocioReservasDto } from './dto/query-negocio-reservas.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt.guard';
 
 @Controller()
 export class ReservaController {
@@ -56,6 +58,7 @@ export class ReservaController {
     return this.service.availability(id, date, parsedRecursoId);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post('negocios/:id/reservas')
   crearEnNegocio(
     @Param('id', ParseIntPipe) id: number,
@@ -74,6 +77,7 @@ export class ReservaController {
     );
   }
 
+  @UseGuards(JwtAuthGuard)
   @Post('reservas')
   crear(@Body() dto: CreateReservaDto, @Req() req: any) {
     const userId = this.getAuthenticatedUserId(req);
@@ -94,6 +98,7 @@ export class ReservaController {
     );
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get('negocios/:id/reservas')
   listByNegocio(
     @Param('id', ParseIntPipe) id: number,
@@ -107,6 +112,7 @@ export class ReservaController {
     );
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get('reservas/mis-reservas')
   miasAlias(
     @Req() req: any,
@@ -122,6 +128,7 @@ export class ReservaController {
     return this.service.getById(id);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Patch('reservas/:id/estado')
   actualizarEstado(
     @Param('id', ParseIntPipe) id: number,
@@ -133,6 +140,7 @@ export class ReservaController {
     return this.service.actualizarEstado(id, actorUserId, dto, isAdmin);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Patch('reservas/:id')
   actualizar(
     @Param('id', ParseIntPipe) id: number,
@@ -144,6 +152,7 @@ export class ReservaController {
     return this.service.actualizar(id, actorUserId, dto, isAdmin);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Delete('reservas/:id')
   cancelar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     const userId = this.getAuthenticatedUserId(req);
@@ -151,6 +160,7 @@ export class ReservaController {
     return this.service.cancelar(id, userId, isAdmin);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Get('me/reservas')
   mias(
     @Req() req: any,

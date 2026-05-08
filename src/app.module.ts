@@ -29,6 +29,8 @@ import { RecursoModule } from './recurso/recurso.module';
 import { SubcategoriaModule } from './subcategoria/subcategoria.module';
 import { NotificacionModule } from './notificacion/notificacion.module';
 import { NenufarizarModule } from './nenufarizar/nenufarizar.module';
+import { CodigosNenufarizacionModule } from './codigos-nenufarizacion/codigos-nenufarizacion.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -50,6 +52,8 @@ import { NenufarizarModule } from './nenufarizar/nenufarizar.module';
     SubcategoriaModule,
     NotificacionModule,
     NenufarizarModule,
+    CodigosNenufarizacionModule,
+    AdminModule,
     ConfigModule.forRoot({ isGlobal: true }),
     JwtModule.register({
       secret: process.env.JWT_SECRET,

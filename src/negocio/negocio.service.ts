@@ -10,7 +10,14 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Prisma, RolGlobal, RolNegocio } from '@prisma/client';
+import {
+  ContenidoEstado,
+  EstadoCuenta,
+  Prisma,
+  ReservaEstado,
+  RolGlobal,
+  RolNegocio,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateNegocioDto } from './dto/create-negocio.dto';
 import { UpdateNegocioDto } from './dto/update-negocio.dto';
@@ -179,6 +186,104 @@ export class NegocioService {
     };
   }
 
+  private async softDeleteNegocioGraph(
+    tx: Prisma.TransactionClient,
+    negocioId: number,
+    deletedAt: Date,
+  ) {
+    const promociones = await tx.promocion.findMany({
+      where: { negocioId },
+      select: { id: true },
+    });
+    const posts = await tx.post.findMany({
+      where: { negocioId },
+      select: { id: true },
+    });
+
+    const promocionIds = promociones.map((item) => item.id);
+    const postIds = posts.map((item) => item.id);
+
+    await tx.promocion.updateMany({
+      where: {
+        negocioId,
+        OR: [
+          { activa: true },
+          { estado: { not: ContenidoEstado.ELIMINADO } },
+          { eliminadoEn: null },
+        ],
+      },
+      data: {
+        activa: false,
+        estado: ContenidoEstado.ELIMINADO,
+        eliminadoEn: deletedAt,
+      },
+    });
+    await tx.reserva.updateMany({
+      where: {
+        negocioId,
+        fecha: { gte: deletedAt },
+        estado: {
+          in: [ReservaEstado.PENDIENTE, ReservaEstado.CONFIRMADA],
+        },
+      },
+      data: {
+        estado: ReservaEstado.CANCELADA,
+        canceladaEn: deletedAt,
+        motivoCancelacion: 'Negocio eliminado',
+      },
+    });
+    await tx.post.updateMany({
+      where: {
+        negocioId,
+        OR: [
+          { estado: { not: ContenidoEstado.ELIMINADO } },
+          { eliminadoEn: null },
+        ],
+      },
+      data: {
+        estado: ContenidoEstado.ELIMINADO,
+        eliminadoEn: deletedAt,
+      },
+    });
+    await tx.resena.updateMany({
+      where: {
+        negocioId,
+        eliminadoEn: null,
+        estado: { not: ContenidoEstado.OCULTO },
+      },
+      data: {
+        estado: ContenidoEstado.OCULTO,
+        moderadoEn: deletedAt,
+        motivoModeracion: 'Negocio eliminado',
+      },
+    });
+    await tx.negocioMiembro.deleteMany({
+      where: { negocioId },
+    });
+    await tx.negocioSeguimiento.deleteMany({
+      where: { negocioId },
+    });
+    await tx.notificacion.deleteMany({
+      where: {
+        OR: [
+          { negocioId },
+          ...(promocionIds.length > 0
+            ? [{ promocionId: { in: promocionIds } }]
+            : []),
+          ...(postIds.length > 0 ? [{ postId: { in: postIds } }] : []),
+        ],
+      },
+    });
+
+    return tx.negocio.update({
+      where: { id: negocioId },
+      data: {
+        activo: false,
+        eliminadoEn: deletedAt,
+      },
+    });
+  }
+
   private async assertCanManageMembers(negocioId: number, actorUserId: number) {
     if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
       throw new UnauthorizedException('Autenticación requerida');
@@ -216,6 +321,8 @@ export class NegocioService {
     const searchTerm = q?.trim() || search?.trim();
 
     const where: any = {
+      activo: true,
+      eliminadoEn: null,
       ...(categoriaId ? { categoriaId } : {}),
       ...(subcategoriaId ? { subcategoriaId } : {}),
       ...(searchTerm
@@ -266,9 +373,13 @@ export class NegocioService {
   }
 
   // DETAIL
-  async getById(id: number) {
-    const n = await this.prisma.negocio.findUnique({
-      where: { id },
+  async getById(id: number, actorUserId?: number) {
+    const n = await this.prisma.negocio.findFirst({
+      where: {
+        id,
+        activo: true,
+        eliminadoEn: null,
+      },
       select: negocioProfileSelect,
     });
 
@@ -276,9 +387,26 @@ export class NegocioService {
     return this.enrichNegocioProfile(n);
   }
 
-  async getBySlug(slug: string, actorUserId?: number) {
-    const n = await this.prisma.negocio.findUnique({
-      where: { slug },
+  async getBySlug(slugOrName: string, actorUserId?: number) {
+    const rawLookup = slugOrName.trim();
+    if (!rawLookup) {
+      throw new NotFoundException('Negocio no encontrado');
+    }
+
+    const normalizedSlug = slugifyNegocioNombre(rawLookup);
+    const slugCandidates = [...new Set([rawLookup, normalizedSlug])].filter(
+      Boolean,
+    );
+
+    const n = await this.prisma.negocio.findFirst({
+      where: {
+        OR: [
+          ...slugCandidates.map((candidate) => ({ slug: candidate })),
+          { nombre: rawLookup },
+        ],
+        activo: true,
+        eliminadoEn: null,
+      },
       select: negocioProfileSelect,
     });
 
@@ -430,13 +558,83 @@ export class NegocioService {
   async remove(id: number, currentUserId: number, isAdmin = false) {
     const n = await this.prisma.negocio.findUnique({
       where: { id },
-      select: { duenoId: true },
+      select: {
+        id: true,
+        nombre: true,
+        duenoId: true,
+        activo: true,
+        eliminadoEn: true,
+      },
     });
     if (!n) throw new NotFoundException('Negocio no encontrado');
     if (!isAdmin && n.duenoId !== currentUserId)
       throw new ForbiddenException('No eres el dueño');
 
-    return this.prisma.negocio.delete({ where: { id } });
+    const actorIsOwner = n.duenoId === currentUserId;
+    const deletedAt = n.eliminadoEn ?? new Date();
+    const wasAlreadyDeleted = !n.activo || Boolean(n.eliminadoEn);
+
+    if (isAdmin && !actorIsOwner) {
+      await this.prisma.$transaction(async (tx) => {
+        await this.softDeleteNegocioGraph(tx, id, deletedAt);
+      });
+
+      return {
+        ok: true,
+        message: wasAlreadyDeleted
+          ? 'El negocio ya estaba eliminado.'
+          : 'Negocio eliminado correctamente',
+        userDeleted: false,
+        sessionClosed: false,
+      };
+    }
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await this.softDeleteNegocioGraph(tx, id, deletedAt);
+
+      const otrosNegociosActivos = await tx.negocio.count({
+        where: {
+          duenoId: n.duenoId,
+          id: { not: id },
+          activo: true,
+          eliminadoEn: null,
+        },
+      });
+
+      const userDeleted = otrosNegociosActivos === 0;
+
+      if (userDeleted) {
+        await tx.usuario.update({
+          where: { id: n.duenoId },
+          data: {
+            estadoCuenta: EstadoCuenta.ELIMINADA,
+            eliminadoEn: deletedAt,
+            emailVerificado: false,
+          },
+        });
+      }
+
+      return {
+        userDeleted,
+        otrosNegociosActivos,
+      };
+    });
+
+    const message = wasAlreadyDeleted
+      ? result.userDeleted
+        ? 'La cuenta de negocio ya estaba eliminada.'
+        : 'El negocio ya estaba eliminado.'
+      : result.userDeleted
+        ? 'Cuenta de negocio eliminada correctamente'
+        : 'Negocio eliminado, pero el usuario mantiene otros negocios activos.';
+
+    return {
+      ok: true,
+      message,
+      userDeleted: result.userDeleted,
+      sessionClosed: actorIsOwner && result.userDeleted,
+      remainingActiveBusinesses: result.otrosNegociosActivos,
+    };
   }
 
   // CONFIG HORARIO
@@ -487,8 +685,8 @@ export class NegocioService {
     actorUserId: number,
     notificacionesActivas?: boolean,
   ) {
-    const negocio = await this.prisma.negocio.findUnique({
-      where: { id: negocioId },
+    const negocio = await this.prisma.negocio.findFirst({
+      where: { id: negocioId, activo: true, eliminadoEn: null },
       select: { id: true, duenoId: true },
     });
 
@@ -558,8 +756,8 @@ export class NegocioService {
   }
 
   async dejarDeSeguir(negocioId: number, actorUserId: number) {
-    const negocio = await this.prisma.negocio.findUnique({
-      where: { id: negocioId },
+    const negocio = await this.prisma.negocio.findFirst({
+      where: { id: negocioId, activo: true, eliminadoEn: null },
       select: { id: true },
     });
 
@@ -582,8 +780,8 @@ export class NegocioService {
   }
 
   async getSeguidores(negocioId: number, actorUserId?: number) {
-    const negocio = await this.prisma.negocio.findUnique({
-      where: { id: negocioId },
+    const negocio = await this.prisma.negocio.findFirst({
+      where: { id: negocioId, activo: true, eliminadoEn: null },
       select: { id: true, nombre: true, slug: true },
     });
 
@@ -631,7 +829,13 @@ export class NegocioService {
 
   async getNegociosSeguidosPorUsuario(actorUserId: number) {
     const items = await this.prisma.negocioSeguimiento.findMany({
-      where: { usuarioId: actorUserId },
+      where: {
+        usuarioId: actorUserId,
+        negocio: {
+          activo: true,
+          eliminadoEn: null,
+        },
+      },
       orderBy: { creadoEn: 'desc' },
       include: {
         negocio: {
@@ -843,11 +1047,7 @@ export class NegocioService {
       },
     });
 
-    if (
-      actorUserId &&
-      Number.isInteger(actorUserId) &&
-      actorUserId > 0
-    ) {
+    if (actorUserId && Number.isInteger(actorUserId) && actorUserId > 0) {
       void this.logroEngine
         .registrarAccion({
           usuarioId: actorUserId,

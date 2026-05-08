@@ -12,6 +12,7 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
@@ -29,6 +30,8 @@ import { CreateVisitaNegocioDto } from './dto/create-visita-negocio.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { SeguirNegocioDto } from './dto/seguir-negocio.dto';
 import { ToggleSeguimientoNotificacionesDto } from './dto/toggle-seguimiento-notificaciones.dto';
+import { AuthService } from '../auth/auth.service';
+import type { Response } from 'express';
 
 @ApiTags('Negocios')
 @Controller('negocios')
@@ -37,6 +40,7 @@ export class NegocioController {
     private service: NegocioService,
     private readonly resenaService: ResenaService,
     private readonly promocionService: PromocionService,
+    private readonly authService: AuthService,
   ) {}
 
   private getAuthenticatedUserId(req: { user?: { id?: number } }) {
@@ -73,6 +77,14 @@ export class NegocioController {
     return this.service.getBySlug(slug, this.getOptionalUserId(req));
   }
 
+  @Get('nickname/:nickname')
+  getByNickname(
+    @Param('nickname') nickname: string,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.getBySlug(nickname, this.getOptionalUserId(req));
+  }
+
   @Get(':id/resenas')
   resenas(@Param('id', ParseIntPipe) id: number) {
     return this.resenaService.getResenasPorNegocio(id);
@@ -80,7 +92,7 @@ export class NegocioController {
 
   @Get(':id/promociones')
   promociones(@Param('id', ParseIntPipe) id: number) {
-    return this.promocionService.listarPorNegocio(id);
+    return this.promocionService.listarPublicasPorNegocio(id);
   }
 
   @Get(':id/seguidores')
@@ -183,8 +195,11 @@ export class NegocioController {
   }
 
   @Get(':id')
-  get(@Param('id', ParseIntPipe) id: number) {
-    return this.service.getById(id);
+  get(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.getById(id, this.getOptionalUserId(req));
   }
 
   @Post()
@@ -204,11 +219,38 @@ export class NegocioController {
     return this.service.update(id, dto, currentUserId, isAdmin);
   }
 
-  @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+  @Delete(':id/cuenta')
+  async removeCuenta(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const currentUserId = this.getAuthenticatedUserId(req);
     const isAdmin = !!req.user?.isAdmin;
-    return this.service.remove(id, currentUserId, isAdmin);
+    const result = await this.service.remove(id, currentUserId, isAdmin);
+
+    if (result.sessionClosed) {
+      this.authService.logout(res);
+    }
+
+    return result;
+  }
+
+  @Delete(':id')
+  async remove(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const currentUserId = this.getAuthenticatedUserId(req);
+    const isAdmin = !!req.user?.isAdmin;
+    const result = await this.service.remove(id, currentUserId, isAdmin);
+
+    if (result.sessionClosed) {
+      this.authService.logout(res);
+    }
+
+    return result;
   }
 
   @Patch(':id/config-horario')

@@ -1,12 +1,32 @@
 import { Transform } from 'class-transformer';
-import { IsEmail, IsString, MinLength, MaxLength } from 'class-validator';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+
+function trimString(value: unknown) {
+  return typeof value === 'string' ? value.trim() : value;
+}
+
+function trimLowercaseString(value: unknown) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : value;
+}
 
 export class LoginDto {
-  @Transform(({ value }) =>
-    typeof value === 'string' ? value.trim().toLowerCase() : value,
-  )
-  @IsEmail()
-  email!: string;
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  identifier?: string;
+
+  @Transform(({ value }) => trimLowercaseString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  email?: string;
+
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  nickname?: string;
 
   @IsString()
   @MinLength(6)

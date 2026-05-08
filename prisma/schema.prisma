@@ -134,24 +134,24 @@ enum NotificacionTipo {
 
 // ---------- Modelos ----------
 model Usuario {
-  id             Int          @id @default(autoincrement())
-  nombre         String
-  nickname       String       @unique
-  email          String       @unique
-  password       String
-  codigoReferido String?      @unique
-  referidoPorId  Int?
-  foto           String?
-  creadoEn       DateTime     @default(now())
-  actualizadoEn  DateTime     @updatedAt
-  eliminadoEn    DateTime?
-  biografia      String?
-  emailVerificado Boolean     @default(false)
-  verificadoEn   DateTime?
-  ultimoLoginEn  DateTime?
+  id                 Int          @id @default(autoincrement())
+  nombre             String
+  nickname           String       @unique
+  email              String       @unique
+  password           String
+  codigoReferido     String?      @unique
+  referidoPorId      Int?
+  foto               String?
+  creadoEn           DateTime     @default(now())
+  actualizadoEn      DateTime     @updatedAt
+  eliminadoEn        DateTime?
+  biografia          String?
+  emailVerificado    Boolean      @default(false)
+  verificadoEn       DateTime?
+  ultimoLoginEn      DateTime?
   welcomeEmailSentAt DateTime?
-  estadoCuenta   EstadoCuenta @default(ACTIVA)
-  rolGlobal      RolGlobal    @default(USUARIO)
+  estadoCuenta       EstadoCuenta @default(ACTIVA)
+  rolGlobal          RolGlobal    @default(USUARIO)
 
   // Economía de pétalos — separada conceptualmente del flujo transaccional real.
   // TODO: valorar mover PetaloTx a un schema/módulo propio para no contaminar queries de ventas.
@@ -159,24 +159,25 @@ model Usuario {
   petalosTx    PetaloTx[]
 
   // Relaciones
-  referidoPor      Usuario?            @relation("UsuarioReferidos", fields: [referidoPorId], references: [id])
-  referidos        Usuario[]           @relation("UsuarioReferidos")
-  negocios         Negocio[]           @relation("DuenoNegocio")
-  resenas          Resena[]
-  reservas         Reserva[]
-  pedidos          Pedido[]
-  compras          Compra[]
-  pagos            Pago[]
-  comentarios      Comentario[]
-  posts            Post[]
-  logrosUsuario    LogroUsuario[]
-  likes            Like[]
-  negocioMiembros  NegocioMiembro[]
-  siguiendo        UsuarioSeguimiento[] @relation("UsuarioSeguidor")
-  seguidores       UsuarioSeguimiento[] @relation("UsuarioSeguido")
+  referidoPor       Usuario?             @relation("UsuarioReferidos", fields: [referidoPorId], references: [id])
+  referidos         Usuario[]            @relation("UsuarioReferidos")
+  negocios          Negocio[]            @relation("DuenoNegocio")
+  resenas           Resena[]
+  reservas          Reserva[]
+  pedidos           Pedido[]
+  compras           Compra[]
+  pagos             Pago[]
+  comentarios       Comentario[]
+  posts             Post[]
+  logrosUsuario     LogroUsuario[]
+  likes             Like[]
+  negocioMiembros   NegocioMiembro[]
+  siguiendo         UsuarioSeguimiento[] @relation("UsuarioSeguidor")
+  seguidores        UsuarioSeguimiento[] @relation("UsuarioSeguido")
   siguiendoNegocios NegocioSeguimiento[]
-  visitasNegocio   VisitaNegocio[]
-  notificaciones   Notificacion[]
+  visitasNegocio    VisitaNegocio[]
+  notificaciones    Notificacion[]
+  adminLogs         AdminLog[]           @relation("AdminLogsAdmin")
 
   @@index([estadoCuenta])
   @@index([rolGlobal])
@@ -185,12 +186,12 @@ model Usuario {
 }
 
 model Categoria {
-  id           Int      @id @default(autoincrement())
-  nombre       String   @unique
-  activo       Boolean  @default(true)
-  creadoEn     DateTime @default(now())
-  actualizadoEn DateTime @updatedAt
-  eliminadoEn  DateTime?
+  id            Int       @id @default(autoincrement())
+  nombre        String    @unique
+  activo        Boolean   @default(true)
+  creadoEn      DateTime  @default(now())
+  actualizadoEn DateTime  @updatedAt
+  eliminadoEn   DateTime?
 
   negocios      Negocio[]
   subcategorias Subcategoria[]
@@ -219,9 +220,9 @@ model Subcategoria {
 }
 
 model Negocio {
-  id               Int      @id @default(autoincrement())
+  id               Int       @id @default(autoincrement())
   nombre           String
-  slug             String?  @unique
+  slug             String?   @unique
   historia         String?
   descripcionCorta String?
   fechaFundacion   DateTime
@@ -229,23 +230,24 @@ model Negocio {
   ciudad           String?
   codigoPostal     String?
   provincia        String?
-  latitud          Decimal? @db.Decimal(9, 6)
-  longitud         Decimal? @db.Decimal(9, 6)
+  latitud          Decimal?  @db.Decimal(9, 6)
+  longitud         Decimal?  @db.Decimal(9, 6)
   categoriaId      Int
   duenoId          Int
   fotoPerfil       String?
   fotoPortada      String?
-  nenufarColor     String?  @map("nenufar_color")
+  nenufarColor     String?   @map("nenufar_color")
+  nenufarActivo    String?
   nenufarKey       String?
   nenufarAsset     String?
   telefono         String?
   emailContacto    String?
   web              String?
   instagram        String?
-  verificado       Boolean  @default(false)
-  activo           Boolean  @default(true)
-  creadoEn         DateTime @default(now())
-  actualizadoEn    DateTime @updatedAt
+  verificado       Boolean   @default(false)
+  activo           Boolean   @default(true)
+  creadoEn         DateTime  @default(now())
+  actualizadoEn    DateTime  @updatedAt
   eliminadoEn      DateTime?
 
   /// MVP: se mantiene en JSON para horario semanal y excepciones.
@@ -260,19 +262,20 @@ model Negocio {
   categoria Categoria @relation(fields: [categoriaId], references: [id])
   dueno     Usuario   @relation("DuenoNegocio", fields: [duenoId], references: [id])
 
-  productos       Producto[]
-  promociones     Promocion[]
-  resenas         Resena[]
-  reservas        Reserva[]
-  logros          Logro[]
-  posts           Post[]
-  pedidos         Pedido[]
-  compras         Compra[]
-  miembros        NegocioMiembro[]
-  seguidores      NegocioSeguimiento[]
-  visitasNegocio  VisitaNegocio[]
-  recursos        RecursoReserva[]
-  notificaciones  Notificacion[]
+  productos      Producto[]
+  promociones    Promocion[]
+  resenas        Resena[]
+  reservas       Reserva[]
+  logros         Logro[]
+  posts          Post[]
+  pedidos        Pedido[]
+  compras        Compra[]
+  miembros       NegocioMiembro[]
+  seguidores     NegocioSeguimiento[]
+  visitasNegocio VisitaNegocio[]
+  recursos       RecursoReserva[]
+  notificaciones Notificacion[]
+  // TODO: para búsqueda geográfica real conviene un índice geoespacial manual en PostgreSQL/PostGIS.
 
   @@index([categoriaId])
   @@index([subcategoriaId])
@@ -281,24 +284,22 @@ model Negocio {
   @@index([ciudad])
   @@index([activo])
   @@index([verificado])
-  // TODO: para búsqueda geográfica real conviene un índice geoespacial manual en PostgreSQL/PostGIS.
 }
 
-
 model Producto {
-  id            Int      @id @default(autoincrement())
+  id            Int       @id @default(autoincrement())
   nombre        String
   descripcion   String?
   /// TODO: validar en backend/SQL manual que precio >= 0.
-  precio        Decimal  @db.Decimal(10, 2)
-  activo        Boolean  @default(true)
-  creadoEn      DateTime @default(now())
-  actualizadoEn DateTime @updatedAt
+  precio        Decimal?  @db.Decimal(10, 2)
+  activo        Boolean   @default(true)
+  creadoEn      DateTime  @default(now())
+  actualizadoEn DateTime  @updatedAt
   eliminadoEn   DateTime?
   negocioId     Int
 
   /// Código interno de producto (SKU). Útil para filtros y búsqueda en dashboard.
-  codigoSKU     String?
+  codigoSKU String?
 
   /// Stock físico disponible para venta.
   /// TODO: validar en backend/SQL manual que stockDisponible >= 0.
@@ -306,7 +307,7 @@ model Producto {
 
   /// Stock bloqueado por pedidos en curso, pendiente de confirmar o liberar.
   /// TODO: validar en backend/SQL manual que stockReservado >= 0 y <= stockDisponible + stockReservado.
-  stockReservado  Int @default(0)
+  stockReservado Int @default(0)
 
   negocio            Negocio     @relation(fields: [negocioId], references: [id])
   promocionPrincipal Promocion[] @relation("ProductoPrincipal")
@@ -344,8 +345,8 @@ model Post {
   promocion Promocion? @relation(fields: [promocionId], references: [id], onDelete: Cascade)
   logro     Logro?     @relation(fields: [logroId], references: [id], onDelete: Cascade)
 
-  comentarios Comentario[]
-  likes       Like[]
+  comentarios    Comentario[]
+  likes          Like[]
   notificaciones Notificacion[]
 
   @@index([creadoEn])
@@ -373,16 +374,16 @@ model Resena {
   actualizadoEn    DateTime        @updatedAt
   eliminadoEn      DateTime?
 
-  negocio Negocio @relation(fields: [negocioId], references: [id])
-  usuario Usuario @relation(fields: [usuarioId], references: [id])
-  Post    Post[]
+  negocio  Negocio   @relation(fields: [negocioId], references: [id])
+  usuario  Usuario   @relation(fields: [usuarioId], references: [id])
+  Post     Post[]
+  // TODO: no se impone @@unique([usuarioId, negocioId]) para permitir histórico de reseñas.
+  // Si se quiere una sola reseña activa por usuario y negocio, conviene hacerlo en backend o con índice único parcial SQL.
 
   @@index([negocioId, creadoEn])
   @@index([usuarioId])
   @@index([creadoEn])
   @@index([estado])
-  // TODO: no se impone @@unique([usuarioId, negocioId]) para permitir histórico de reseñas.
-  // Si se quiere una sola reseña activa por usuario y negocio, conviene hacerlo en backend o con índice único parcial SQL.
 }
 
 model Promocion {
@@ -546,14 +547,14 @@ model Pago {
 /// Recurso reservable dentro de un negocio (mesa, sala, empleado, pista...).
 /// Necesario para permitir múltiples reservas simultáneas en el mismo negocio.
 model RecursoReserva {
-  id            Int      @id @default(autoincrement())
+  id            Int       @id @default(autoincrement())
   negocioId     Int
   nombre        String
   descripcion   String?
   capacidad     Int?
-  activo        Boolean  @default(true)
-  creadoEn      DateTime @default(now())
-  actualizadoEn DateTime @updatedAt
+  activo        Boolean   @default(true)
+  creadoEn      DateTime  @default(now())
+  actualizadoEn DateTime  @updatedAt
   eliminadoEn   DateTime?
 
   negocio  Negocio   @relation(fields: [negocioId], references: [id])
@@ -564,26 +565,28 @@ model RecursoReserva {
 }
 
 model Reserva {
-  id                 Int           @id @default(autoincrement())
-  fecha              DateTime
-  estado             ReservaEstado @default(PENDIENTE)
-  usuarioId          Int
-  negocioId          Int
+  id                Int           @id @default(autoincrement())
+  fecha             DateTime
+  estado            ReservaEstado @default(PENDIENTE)
+  usuarioId         Int
+  negocioId         Int
   /// Recurso específico reservado (mesa, sala, empleado...).
   /// Permite múltiples reservas simultáneas en el mismo negocio.
   /// Si es null, el negocio no gestiona recursos diferenciados.
-  recursoId          Int?
-  nota               String?
-  duracionMinutos    Int?
-  numPersonas        Int?
-  canceladaEn        DateTime?
-  motivoCancelacion  String?
-  creadoEn           DateTime      @default(now())
-  actualizadoEn      DateTime      @updatedAt
+  recursoId         Int?
+  nota              String?
+  duracionMinutos   Int?
+  numPersonas       Int?
+  canceladaEn       DateTime?
+  motivoCancelacion String?
+  creadoEn          DateTime      @default(now())
+  actualizadoEn     DateTime      @updatedAt
 
-  negocio  Negocio         @relation(fields: [negocioId], references: [id])
-  usuario  Usuario         @relation(fields: [usuarioId], references: [id])
-  recurso  RecursoReserva? @relation(fields: [recursoId], references: [id])
+  negocio Negocio         @relation(fields: [negocioId], references: [id])
+  usuario Usuario         @relation(fields: [usuarioId], references: [id])
+  recurso RecursoReserva? @relation(fields: [recursoId], references: [id])
+  // TODO: validar en backend/SQL manual que duracionMinutos > 0 y numPersonas > 0 cuando se informen.
+  // TODO: para negocios sin recursoId, validar solapamientos de rango (fecha, fecha+duracion) en backend.
 
   /// Unicidad por negocio + recurso + fecha. Si recursoId es null, el backend debe
   /// gestionar solapamientos de rango (fecha, fecha+duracion) para ese negocio.
@@ -593,8 +596,6 @@ model Reserva {
   @@index([recursoId])
   @@index([fecha])
   @@index([estado])
-  // TODO: validar en backend/SQL manual que duracionMinutos > 0 y numPersonas > 0 cuando se informen.
-  // TODO: para negocios sin recursoId, validar solapamientos de rango (fecha, fecha+duracion) en backend.
 }
 
 model Comentario {
@@ -632,26 +633,26 @@ model Like {
 }
 
 model PedidoProducto {
-  id                 Int      @id @default(autoincrement())
-  pedidoId           Int
-  productoId         Int
-  promocionId        Int?
+  id                  Int      @id @default(autoincrement())
+  pedidoId            Int
+  productoId          Int
+  promocionId         Int?
   /// TODO: validar en backend/SQL manual que cantidad > 0.
-  cantidad           Int
+  cantidad            Int
   /// Snapshot del precio unitario aplicado en el momento del pedido.
   /// TODO: validar en backend/SQL manual que precioUnitario >= 0.
-  precioUnitario     Decimal  @db.Decimal(10, 2)
+  precioUnitario      Decimal  @db.Decimal(10, 2)
   /// Descuento monetario aplicado sobre la línea en ese momento.
   /// TODO: validar en backend/SQL manual que descuentoAplicado >= 0 cuando exista.
-  descuentoAplicado  Decimal? @db.Decimal(10, 2)
+  descuentoAplicado   Decimal? @db.Decimal(10, 2)
   /// TODO: validar en backend/SQL manual que subtotal >= 0 y sea coherente con cantidad/precio/descuento.
-  subtotal           Decimal  @db.Decimal(10, 2)
+  subtotal            Decimal  @db.Decimal(10, 2)
   /// Snapshot de la categoría del producto en el momento del pedido.
   /// Permite filtrar ventas históricas por categoría sin depender de la categoría actual del producto.
   /// Si el producto cambia de categoría, el histórico de ventas sigue siendo correcto.
   categoriaIdSnapshot Int?
-  creadoEn           DateTime @default(now())
-  actualizadoEn      DateTime @updatedAt
+  creadoEn            DateTime @default(now())
+  actualizadoEn       DateTime @updatedAt
 
   pedido            Pedido     @relation(fields: [pedidoId], references: [id])
   producto          Producto   @relation(fields: [productoId], references: [id])
@@ -665,13 +666,13 @@ model PedidoProducto {
 }
 
 model LogroUsuario {
-  id           Int      @id @default(autoincrement())
-  logroId      Int
-  usuarioId    Int
-  veces        Int      @default(0)
-  conseguido   Boolean  @default(false)
-  conseguidoEn DateTime?
-  actualizadoEn DateTime @updatedAt
+  id            Int       @id @default(autoincrement())
+  logroId       Int
+  usuarioId     Int
+  veces         Int       @default(0)
+  conseguido    Boolean   @default(false)
+  conseguidoEn  DateTime?
+  actualizadoEn DateTime  @updatedAt
 
   logro   Logro   @relation(fields: [logroId], references: [id])
   usuario Usuario @relation(fields: [usuarioId], references: [id])
@@ -767,6 +768,22 @@ model Notificacion {
   @@index([negocioId])
 }
 
+model AdminLog {
+  id        Int      @id @default(autoincrement())
+  adminId   Int
+  accion    String
+  entidad   String
+  entidadId Int?
+  motivo    String?
+  creadoEn  DateTime @default(now())
+
+  admin Usuario @relation("AdminLogsAdmin", fields: [adminId], references: [id])
+
+  @@index([adminId, creadoEn])
+  @@index([entidad, entidadId])
+  @@index([accion, creadoEn])
+}
+
 model UsuarioSeguimiento {
   id         Int      @id @default(autoincrement())
   seguidorId Int
@@ -775,19 +792,19 @@ model UsuarioSeguimiento {
 
   seguidor Usuario @relation("UsuarioSeguidor", fields: [seguidorId], references: [id])
   seguido  Usuario @relation("UsuarioSeguido", fields: [seguidoId], references: [id])
+  // TODO: impedir auto-follow (`seguidorId != seguidoId`) en backend o con CHECK SQL manual.
 
   @@unique([seguidorId, seguidoId])
   @@index([seguidorId])
   @@index([seguidoId])
-  // TODO: impedir auto-follow (`seguidorId != seguidoId`) en backend o con CHECK SQL manual.
 }
 
 model NegocioSeguimiento {
-  id        Int      @id @default(autoincrement())
-  usuarioId Int
-  negocioId Int
-  creadoEn  DateTime @default(now())
-  notificacionesActivas Boolean @default(true)
+  id                    Int      @id @default(autoincrement())
+  usuarioId             Int
+  negocioId             Int
+  creadoEn              DateTime @default(now())
+  notificacionesActivas Boolean  @default(true)
 
   usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
   negocio Negocio @relation(fields: [negocioId], references: [id], onDelete: Cascade)
@@ -795,4 +812,15 @@ model NegocioSeguimiento {
   @@unique([usuarioId, negocioId])
   @@index([usuarioId])
   @@index([negocioId])
+}
+
+model CodigoNenufarizacion {
+  id       Int       @id @default(autoincrement())
+  codigo   String    @unique
+  usado    Boolean   @default(false)
+  activo   Boolean   @default(true)
+  creadoEn DateTime  @default(now())
+  usadoEn  DateTime?
+
+  @@index([activo, usado])
 }

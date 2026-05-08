@@ -5,12 +5,11 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { ContenidoEstado, Prisma, RolGlobal } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateUsuarioDto } from './dto/create-usuario.dto';
 import { UpdateUsuarioDto } from './dto/update-usuario.dto';
 import * as bcrypt from 'bcrypt';
-import { RolGlobal } from '@prisma/client';
 
 const publicUserSelect = {
   id: true,
@@ -146,7 +145,10 @@ export class UsuarioService {
           orderBy: { creadoEn: 'asc' },
         },
         resenas: {
-          where: { eliminadoEn: null },
+          where: {
+            eliminadoEn: null,
+            estado: ContenidoEstado.PUBLICADO,
+          },
           select: {
             id: true,
             contenido: true,
@@ -202,7 +204,10 @@ export class UsuarioService {
           orderBy: { creadoEn: 'asc' },
         },
         resenas: {
-          where: { eliminadoEn: null },
+          where: {
+            eliminadoEn: null,
+            estado: ContenidoEstado.PUBLICADO,
+          },
           select: {
             id: true,
             contenido: true,
