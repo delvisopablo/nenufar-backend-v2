@@ -22,6 +22,7 @@ import { CreateNegocioDto } from './dto/create-negocio.dto';
 import { UpdateNegocioDto } from './dto/update-negocio.dto';
 import { QueryNegocioDto } from './dto/query-negocio.dto';
 import { ConfigHorarioDto } from './dto/config-horario.dto';
+import { UpdateNegocioImagenesDto } from './dto/update-negocio-imagenes.dto';
 import { ResenaService } from '../reseña/resena.service';
 import { PromocionService } from '../promocion/promocion.service';
 import { CreateNegocioMiembroDto } from './dto/create-negocio-miembro.dto';
@@ -264,8 +265,30 @@ export class NegocioController {
     return this.service.setConfigHorario(id, dto, currentUserId, isAdmin);
   }
 
+  @Patch(':id/horario')
+  updateHorario(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ConfigHorarioDto,
+    @Req() req: any,
+  ) {
+    const currentUserId = this.getAuthenticatedUserId(req);
+    const isAdmin = !!req.user?.isAdmin;
+    return this.service.setConfigHorario(id, dto, currentUserId, isAdmin);
+  }
+
   @Get(':id/horario')
   horario(@Param('id', ParseIntPipe) id: number) {
     return this.service.getHorario(id);
+  }
+
+  @Post(':id/imagenes')
+  updateImagenes(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateNegocioImagenesDto,
+    @Req() req: any,
+  ) {
+    const currentUserId = this.getAuthenticatedUserId(req);
+    const isAdmin = !!req.user?.isAdmin;
+    return this.service.updateImagenes(id, dto, currentUserId, isAdmin);
   }
 }

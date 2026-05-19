@@ -107,6 +107,12 @@ enum EstadoCuenta {
   ELIMINADA
 }
 
+enum EstadoSolicitudProducto {
+  PENDIENTE
+  APROBADA
+  RECHAZADA
+}
+
 enum RolGlobal {
   USUARIO
   MODERADOR
@@ -128,6 +134,7 @@ enum NotificacionTipo {
   POST
   NEGOCIO
   RESENA
+  RESERVA
   REFERIDO
   SISTEMA
 }
@@ -176,6 +183,7 @@ model Usuario {
   seguidores        UsuarioSeguimiento[] @relation("UsuarioSeguido")
   siguiendoNegocios NegocioSeguimiento[]
   visitasNegocio    VisitaNegocio[]
+  solicitudesProductoCatalogo SolicitudProductoCatalogo[]
   notificaciones    Notificacion[]
   adminLogs         AdminLog[]           @relation("AdminLogsAdmin")
 
@@ -254,6 +262,7 @@ model Negocio {
   /// TODO: si crecen las consultas/validaciones, normalizar a tablas HorarioNegocio/HorarioExcepcion.
   horario          Json?
   intervaloReserva Int?
+  reservasActivas  Boolean   @default(false)
 
   // Subcategoría opcional
   subcategoriaId Int?
@@ -274,6 +283,7 @@ model Negocio {
   seguidores     NegocioSeguimiento[]
   visitasNegocio VisitaNegocio[]
   recursos       RecursoReserva[]
+  solicitudesProductoCatalogo SolicitudProductoCatalogo[]
   notificaciones Notificacion[]
   // TODO: para búsqueda geográfica real conviene un índice geoespacial manual en PostgreSQL/PostGIS.
 
@@ -283,6 +293,7 @@ model Negocio {
   @@index([slug])
   @@index([ciudad])
   @@index([activo])
+  @@index([reservasActivas])
   @@index([verificado])
 }
 
@@ -292,6 +303,7 @@ model Producto {
   descripcion   String?
   /// TODO: validar en backend/SQL manual que precio >= 0.
   precio        Decimal?  @db.Decimal(10, 2)
+  foto          String?
   activo        Boolean   @default(true)
   creadoEn      DateTime  @default(now())
   actualizadoEn DateTime  @updatedAt
@@ -300,6 +312,7 @@ model Producto {
 
   /// Código interno de producto (SKU). Útil para filtros y búsqueda en dashboard.
   codigoSKU String?
+  codigoProducto String? @unique
 
   /// Stock físico disponible para venta.
   /// TODO: validar en backend/SQL manual que stockDisponible >= 0.
@@ -313,12 +326,15 @@ model Producto {
   promocionPrincipal Promocion[] @relation("ProductoPrincipal")
   promociones        Promocion[] @relation("PromocionPack")
 
+  resenasProducto            ResenaProducto[]
+  solicitudesCatalogo        SolicitudProductoCatalogo[]
   pedidoProductos PedidoProducto[]
   Logro           Logro[]
 
   @@index([negocioId])
   @@index([activo])
   @@index([codigoSKU])
+  @@index([codigoProducto])
 }
 
 model Post {
@@ -377,6 +393,8 @@ model Resena {
   negocio  Negocio   @relation(fields: [negocioId], references: [id])
   usuario  Usuario   @relation(fields: [usuarioId], references: [id])
   Post     Post[]
+  productos ResenaProducto[]
+  productosSugeridos SolicitudProductoCatalogo[]
   // TODO: no se impone @@unique([usuarioId, negocioId]) para permitir histórico de reseñas.
   // Si se quiere una sola reseña activa por usuario y negocio, conviene hacerlo en backend o con índice único parcial SQL.
 
@@ -384,6 +402,45 @@ model Resena {
   @@index([usuarioId])
   @@index([creadoEn])
   @@index([estado])
+}
+
+model ResenaProducto {
+  id         Int      @id @default(autoincrement())
+  resenaId   Int
+  productoId Int
+  creadoEn   DateTime @default(now())
+
+  resena   Resena   @relation(fields: [resenaId], references: [id], onDelete: Cascade)
+  producto Producto @relation(fields: [productoId], references: [id])
+
+  @@unique([resenaId, productoId])
+  @@index([resenaId])
+  @@index([productoId])
+}
+
+model SolicitudProductoCatalogo {
+  id             Int                     @id @default(autoincrement())
+  negocioId      Int
+  usuarioId      Int
+  resenaId       Int?
+  productoId     Int?
+  nombre         String
+  descripcion    String?
+  precioSugerido Decimal?                @db.Decimal(10, 2)
+  estado         EstadoSolicitudProducto @default(PENDIENTE)
+  motivoRechazo  String?
+  creadoEn       DateTime                @default(now())
+  actualizadoEn  DateTime                @updatedAt
+
+  negocio  Negocio   @relation(fields: [negocioId], references: [id])
+  usuario  Usuario   @relation(fields: [usuarioId], references: [id])
+  resena   Resena?   @relation(fields: [resenaId], references: [id], onDelete: SetNull)
+  producto Producto? @relation(fields: [productoId], references: [id])
+
+  @@index([negocioId, estado, creadoEn])
+  @@index([usuarioId, creadoEn])
+  @@index([resenaId])
+  @@index([productoId])
 }
 
 model Promocion {
@@ -758,7 +815,7 @@ model Notificacion {
   promocionId Int?
   postId      Int?
 
-  usuario   Usuario    @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  usuario   Usuario    @relation(fields: [usuarioId], references: [id])
   negocio   Negocio?   @relation(fields: [negocioId], references: [id], onDelete: SetNull)
   promocion Promocion? @relation(fields: [promocionId], references: [id], onDelete: SetNull)
   post      Post?      @relation(fields: [postId], references: [id], onDelete: SetNull)
@@ -766,6 +823,8 @@ model Notificacion {
   @@index([usuarioId, leida])
   @@index([usuarioId, creadoEn])
   @@index([negocioId])
+  @@index([postId])
+  @@index([promocionId])
 }
 
 model AdminLog {
@@ -806,8 +865,8 @@ model NegocioSeguimiento {
   creadoEn              DateTime @default(now())
   notificacionesActivas Boolean  @default(true)
 
-  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
-  negocio Negocio @relation(fields: [negocioId], references: [id], onDelete: Cascade)
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+  negocio Negocio @relation(fields: [negocioId], references: [id])
 
   @@unique([usuarioId, negocioId])
   @@index([usuarioId])

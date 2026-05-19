@@ -58,6 +58,7 @@ export class PromocionService {
         productoId: dto.productoId ?? null,
         negocioId: dto.negocioId,
         activa: dto.activa ?? true,
+        estado: dto.estado ?? ContenidoEstado.PUBLICADO,
         codigo: normalizeOptionalString(dto.codigo),
         stockMaximo: dto.stockMaximo ?? null,
         usosMaximos: dto.usosMaximos ?? null,
@@ -126,6 +127,7 @@ export class PromocionService {
           ? { usosMaximos: dto.usosMaximos }
           : {}),
         ...(dto.activa !== undefined ? { activa: dto.activa } : {}),
+        ...(dto.estado !== undefined ? { estado: dto.estado } : {}),
         ...(dto.productoId !== undefined ? { productoId: dto.productoId } : {}),
         pack: dto.packIds
           ? {

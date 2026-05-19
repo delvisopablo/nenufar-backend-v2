@@ -4,9 +4,16 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { CompraEstado, PagoEstado, Prisma, RolGlobal } from '@prisma/client';
+import {
+  CompraEstado,
+  PagoEstado,
+  Prisma,
+  ReservaEstado,
+  RolGlobal,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DashboardRangeDto } from './dto/dashboard-range.dto';
+import { hasOpenDays, HorarioJson } from '../negocio/horario.util';
 
 function decimalToNumber(value?: Prisma.Decimal | null) {
   if (!value) return 0;
@@ -335,7 +342,17 @@ export class DashboardService {
     await this.assertCanManageNegocio(negocioId, actorUserId);
     const period = this.resolvePeriod(query);
 
-    const [counts, proximasReservas] = await this.prisma.$transaction([
+    const [negocio, counts, proximasReservas] = await this.prisma.$transaction([
+      this.prisma.negocio.findUnique({
+        where: { id: negocioId },
+        select: {
+          id: true,
+          nombre: true,
+          horario: true,
+          intervaloReserva: true,
+          reservasActivas: true,
+        },
+      }),
       this.prisma.reserva.groupBy({
         by: ['estado'],
         orderBy: { estado: 'asc' },
@@ -349,6 +366,9 @@ export class DashboardService {
         where: {
           negocioId,
           fecha: { gte: new Date() },
+          estado: {
+            in: [ReservaEstado.PENDIENTE, ReservaEstado.CONFIRMADA],
+          },
         },
         include: {
           usuario: {
@@ -362,6 +382,7 @@ export class DashboardService {
         take: 10,
       }),
     ]);
+    if (!negocio) throw new NotFoundException('Negocio no encontrado');
 
     const conteo = {
       PENDIENTE: 0,
@@ -375,12 +396,29 @@ export class DashboardService {
       conteo[item.estado] = groupCount(item._count);
     }
 
+    const horario =
+      negocio.horario && hasOpenDays(negocio.horario as HorarioJson)
+        ? negocio.horario
+        : null;
+
     return {
       periodo: {
         from: period.from.toISOString(),
         to: period.to.toISOString(),
         days: period.days,
       },
+      negocio: {
+        id: negocio.id,
+        nombre: negocio.nombre,
+        horario,
+        intervaloReserva: negocio.intervaloReserva,
+        reservasActivas: negocio.reservasActivas,
+      },
+      reservasActivas: negocio.reservasActivas,
+      horario,
+      intervaloReserva: negocio.intervaloReserva,
+      reservasPendientes: conteo.PENDIENTE,
+      reservasConfirmadas: conteo.CONFIRMADA,
       conteo,
       proximasReservas,
     };

@@ -10,6 +10,7 @@ import {
   Patch,
   Post,
   Req,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ResenaService } from './resena.service';
 import { CreateResenaDto } from './dto/create-resena.dto';
@@ -18,6 +19,14 @@ import { UpdateResenaDto } from './dto/update-resena.dto';
 @Controller('resena')
 export class ResenaController {
   constructor(private readonly resenaService: ResenaService) {}
+
+  private getAuthenticatedUserId(req: { user?: { id?: number } }) {
+    const userId = Number(req.user?.id);
+    if (!Number.isInteger(userId) || userId <= 0) {
+      throw new UnauthorizedException('Autenticación requerida');
+    }
+    return userId;
+  }
 
   /** Todas las reseñas (global) */
   @Get()
@@ -52,8 +61,7 @@ export class ResenaController {
   /** Crear reseña (+ post + pétalos) */
   @Post()
   crear(@Body() dto: CreateResenaDto, @Req() req: any) {
-    const userId: number = typeof req.user?.id === 'number' ? req.user.id : 1; // TODO: reemplazar por JwtAuthGuard
-    return this.resenaService.crear(userId, dto);
+    return this.resenaService.crear(this.getAuthenticatedUserId(req), dto);
   }
 
   /** Actualizar reseña (solo autor) */
@@ -63,14 +71,16 @@ export class ResenaController {
     @Body() dto: UpdateResenaDto,
     @Req() req: any,
   ) {
-    const userId: number = typeof req.user?.id === 'number' ? req.user.id : 1;
-    return this.resenaService.actualizar(id, dto, userId);
+    return this.resenaService.actualizar(
+      id,
+      dto,
+      this.getAuthenticatedUserId(req),
+    );
   }
 
   /** Eliminar reseña (solo autor) */
   @Delete(':id')
   eliminar(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
-    const userId: number = typeof req.user?.id === 'number' ? req.user.id : 1;
-    return this.resenaService.eliminar(id, userId);
+    return this.resenaService.eliminar(id, this.getAuthenticatedUserId(req));
   }
 }

@@ -10,6 +10,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateUsuarioDto } from './dto/create-usuario.dto';
 import { UpdateUsuarioDto } from './dto/update-usuario.dto';
 import * as bcrypt from 'bcrypt';
+import {
+  mapResenaPublic,
+  resenaPublicSelect,
+} from '../reseña/resena-public.util';
 
 const publicUserSelect = {
   id: true,
@@ -46,6 +50,7 @@ export class UsuarioService {
     return {
       ...user,
       foto_perfil: user.foto,
+      petalosBalance: user.petalosSaldo,
     };
   }
 
@@ -149,26 +154,19 @@ export class UsuarioService {
             eliminadoEn: null,
             estado: ContenidoEstado.PUBLICADO,
           },
-          select: {
-            id: true,
-            contenido: true,
-            puntuacion: true,
-            creadoEn: true,
-            negocio: {
-              select: {
-                id: true,
-                nombre: true,
-                nenufarColor: true,
-              },
-            },
-          },
+          select: resenaPublicSelect,
           orderBy: { creadoEn: 'desc' },
           take: 10,
         },
       },
     });
     if (!usuario) throw new NotFoundException('Usuario no encontrado');
-    return usuario;
+    return {
+      ...usuario,
+      foto_perfil: usuario.foto,
+      petalosBalance: usuario.petalosSaldo,
+      resenas: usuario.resenas.map((resena) => mapResenaPublic(resena)),
+    };
   }
 
   async getPerfilByNickname(nickname: string) {
@@ -208,20 +206,7 @@ export class UsuarioService {
             eliminadoEn: null,
             estado: ContenidoEstado.PUBLICADO,
           },
-          select: {
-            id: true,
-            contenido: true,
-            puntuacion: true,
-            creadoEn: true,
-            negocio: {
-              select: {
-                id: true,
-                nombre: true,
-                slug: true,
-                nenufarColor: true,
-              },
-            },
-          },
+          select: resenaPublicSelect,
           orderBy: { creadoEn: 'desc' },
           take: 10,
         },
@@ -232,7 +217,12 @@ export class UsuarioService {
       throw new NotFoundException('Usuario no encontrado');
     }
 
-    return usuario;
+    return {
+      ...usuario,
+      foto_perfil: usuario.foto,
+      petalosBalance: usuario.petalosSaldo,
+      resenas: usuario.resenas.map((resena) => mapResenaPublic(resena)),
+    };
   }
 
   async actualizarPerfil(

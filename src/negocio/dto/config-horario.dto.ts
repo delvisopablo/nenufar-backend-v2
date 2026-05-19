@@ -1,7 +1,9 @@
-import { IsInt, IsObject, IsOptional, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsBoolean, IsInt, IsObject, IsOptional, Min } from 'class-validator';
 
 export class ConfigHorarioDto {
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(5)
   intervaloReserva?: number; // minutos
@@ -9,6 +11,10 @@ export class ConfigHorarioDto {
   @IsOptional()
   @IsObject()
   horario?: any; // mantenemos libre; si quieres, luego validamos el shape
+
+  @IsOptional()
+  @IsBoolean()
+  reservasActivas?: boolean;
 }
 
 // (opcional) ejemplo de shape esperado:

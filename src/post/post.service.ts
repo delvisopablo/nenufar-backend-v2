@@ -151,13 +151,33 @@ export class PostService {
     return this.prisma.post.delete({ where: { id } });
   }
 
-  /** Dar like consumiendo 1 pétalo (sin permitir doble-like) */
+  /** Dar like consumiendo 1 pétalo y premiar al autor de la reseña si aplica. */
   async like(postId: number, userId: number) {
-    const user = await this.prisma.usuario.findUnique({
-      where: { id: userId },
-      select: { petalosSaldo: true },
-    });
+    const [user, post] = await this.prisma.$transaction([
+      this.prisma.usuario.findUnique({
+        where: { id: userId },
+        select: { petalosSaldo: true },
+      }),
+      this.prisma.post.findFirst({
+        where: {
+          id: postId,
+          eliminadoEn: null,
+          estado: ContenidoEstado.PUBLICADO,
+        },
+        select: {
+          id: true,
+          tipo: true,
+          resena: {
+            select: {
+              id: true,
+              usuarioId: true,
+            },
+          },
+        },
+      }),
+    ]);
     if (!user) throw new NotFoundException('Usuario no encontrado');
+    if (!post) throw new NotFoundException('Post no encontrado');
     if (user.petalosSaldo < 1)
       throw new BadRequestException('Saldo de pétalos insuficiente');
 
@@ -188,7 +208,44 @@ export class PostService {
         },
       });
 
-      return { ok: true };
+      const resenaAuthorId = post.resena?.usuarioId;
+      let autorSaldo: number | null = null;
+      if (
+        post.tipo === PostTipo.RESENA &&
+        typeof resenaAuthorId === 'number' &&
+        resenaAuthorId !== userId
+      ) {
+        const autor = await tx.usuario.update({
+          where: { id: resenaAuthorId },
+          data: { petalosSaldo: { increment: 1 } },
+          select: { petalosSaldo: true },
+        });
+        autorSaldo = autor.petalosSaldo;
+
+        await tx.petaloTx.create({
+          data: {
+            usuarioId: resenaAuthorId,
+            delta: 1,
+            saldoResultante: autor.petalosSaldo,
+            motivo: MotivoTx.LIKE,
+            descripcion: 'Tu reseña ha recibido un like. +1 pétalo',
+            refTipo: 'Post',
+            refId: postId,
+            metadata: {
+              resenaId: post.resena?.id,
+              likedByUserId: userId,
+            },
+          },
+        });
+      }
+
+      return {
+        ok: true,
+        postId,
+        usuarioId: userId,
+        liked: true,
+        autorRecompensado: autorSaldo !== null,
+      };
     });
   }
 
@@ -218,7 +275,11 @@ export class PostService {
   /** Comentarios mínimos (crear/listar) — si ya tienes módulo de comentarios, ignora estas 2 */
   async listComentarios(postId: number) {
     return this.prisma.comentario.findMany({
-      where: { postId },
+      where: {
+        postId,
+        eliminadoEn: null,
+        estado: ContenidoEstado.PUBLICADO,
+      },
       include: { usuario: { select: { id: true, nombre: true } } },
       orderBy: { creadoEn: 'asc' },
     });
@@ -233,6 +294,7 @@ export class PostService {
 
     return this.prisma.comentario.create({
       data: { postId, usuarioId: userId, contenido: contenido.trim() },
+      include: { usuario: { select: { id: true, nombre: true } } },
     });
   }
 

@@ -23,6 +23,7 @@ import { CreateNegocioDto } from './dto/create-negocio.dto';
 import { UpdateNegocioDto } from './dto/update-negocio.dto';
 import { QueryNegocioDto } from './dto/query-negocio.dto';
 import { ConfigHorarioDto } from './dto/config-horario.dto';
+import { UpdateNegocioImagenesDto } from './dto/update-negocio-imagenes.dto';
 import { CreateNegocioMiembroDto } from './dto/create-negocio-miembro.dto';
 import { UpdateNegocioMiembroDto } from './dto/update-negocio-miembro.dto';
 import { CreateVisitaNegocioDto } from './dto/create-visita-negocio.dto';
@@ -31,62 +32,16 @@ import {
   generateUniqueNegocioSlug,
   slugifyNegocioNombre,
 } from './negocio-slug.util';
+import {
+  HorarioJson,
+  hasOpenDays,
+  normalizeHorarioInput,
+} from './horario.util';
 
 function toPaging(page?: number | string, limit?: number | string) {
   const p = Math.max(1, Number(page ?? 1) | 0);
   const l = Math.max(1, Math.min(100, Number(limit ?? 20) | 0));
   return { skip: (p - 1) * l, take: l, page: p, limit: l };
-}
-
-function isHHmm(s: string) {
-  return /^\d{2}:\d{2}$/.test(s);
-}
-
-function validateHorarioShape(h: any) {
-  if (!h) return;
-  if (h.weekly && typeof h.weekly !== 'object') {
-    throw new BadRequestException('horario.weekly debe ser objeto');
-  }
-  if (h.exceptions && typeof h.exceptions !== 'object') {
-    throw new BadRequestException('horario.exceptions debe ser objeto');
-  }
-  const days = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-  for (const d of days) {
-    const ranges = h.weekly?.[d];
-    if (!ranges) continue;
-    if (!Array.isArray(ranges))
-      throw new BadRequestException(`horario.weekly.${d} debe ser array`);
-    for (const r of ranges) {
-      if (!Array.isArray(r) || r.length !== 2)
-        throw new BadRequestException(`Rango inválido en weekly.${d}`);
-      const [ini, fin] = r;
-      if (!isHHmm(ini) || !isHHmm(fin))
-        throw new BadRequestException(`Formato HH:mm inválido en weekly.${d}`);
-      if (ini >= fin)
-        throw new BadRequestException(`Inicio>=fin en weekly.${d}`);
-    }
-  }
-  if (h.exceptions) {
-    for (const [ymd, arr] of Object.entries(h.exceptions)) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd))
-        throw new BadRequestException(`Fecha inválida en exceptions: ${ymd}`);
-      if (!Array.isArray(arr))
-        throw new BadRequestException(`exceptions["${ymd}"] debe ser array`);
-      for (const r of arr as any[]) {
-        if (!Array.isArray(r) || r.length !== 2)
-          throw new BadRequestException(
-            `Rango inválido en exceptions["${ymd}"]`,
-          );
-        const [ini, fin] = r;
-        if (!isHHmm(ini) || !isHHmm(fin))
-          throw new BadRequestException(
-            `Formato HH:mm inválido en exceptions["${ymd}"]`,
-          );
-        if (ini >= fin)
-          throw new BadRequestException(`Inicio>=fin en exceptions["${ymd}"]`);
-      }
-    }
-  }
 }
 
 const negocioProfileSelect = {
@@ -105,6 +60,7 @@ const negocioProfileSelect = {
   fotoPerfil: true,
   fotoPortada: true,
   nenufarColor: true,
+  nenufarActivo: true,
   nenufarKey: true,
   nenufarAsset: true,
   telefono: true,
@@ -115,6 +71,7 @@ const negocioProfileSelect = {
   activo: true,
   horario: true,
   intervaloReserva: true,
+  reservasActivas: true,
   categoria: { select: { id: true, nombre: true } },
   subcategoria: { select: { id: true, nombre: true } },
   duenoId: true,
@@ -124,6 +81,7 @@ const negocioProfileSelect = {
       nombre: true,
       nickname: true,
       foto: true,
+      petalosSaldo: true,
     },
   },
   _count: {
@@ -142,6 +100,47 @@ export class NegocioService {
     private prisma: PrismaService,
     private readonly logroEngine: LogroEngineService,
   ) {}
+
+  private normalizeHorarioPayload(horario: unknown) {
+    if (horario === undefined) {
+      return undefined;
+    }
+
+    return normalizeHorarioInput(horario);
+  }
+
+  private toPrismaHorarioValue(horario: HorarioJson | null) {
+    return horario === null ? Prisma.JsonNull : (horario as Prisma.InputJsonValue);
+  }
+
+  private cleanHorarioForResponse(horario?: Prisma.JsonValue | HorarioJson | null) {
+    const normalizedHorario = horario as HorarioJson | null | undefined;
+    return normalizedHorario && hasOpenDays(normalizedHorario)
+      ? normalizedHorario
+      : null;
+  }
+
+  private assertReservasConfig(
+    reservasActivas: boolean,
+    intervaloReserva?: number | null,
+    horario?: HorarioJson | null,
+  ) {
+    if (!reservasActivas) {
+      return;
+    }
+
+    if (!intervaloReserva || intervaloReserva <= 0) {
+      throw new BadRequestException(
+        'Si las reservas estan activas, intervaloReserva debe ser positivo',
+      );
+    }
+
+    if (!horario || !hasOpenDays(horario)) {
+      throw new BadRequestException(
+        'Si las reservas estan activas, debe haber al menos un dia abierto',
+      );
+    }
+  }
 
   private async resolveRequestedSlug(value: string, currentNegocioId?: number) {
     if (!value.trim()) {
@@ -173,16 +172,35 @@ export class NegocioService {
       _count: { id: true },
     });
 
+    const mediaResenas =
+      typeof stats._avg.puntuacion === 'number'
+        ? Number(stats._avg.puntuacion.toFixed(1))
+        : 0;
+    const dueno = {
+      id: negocio.dueno.id,
+      nombre: negocio.dueno.nombre,
+      nickname: negocio.dueno.nickname,
+      foto: negocio.dueno.foto,
+    };
+
     return {
       ...negocio,
+      dueno,
+      nickname: negocio.slug ?? null,
+      horario: this.cleanHorarioForResponse(negocio.horario),
+      // TODO: cuando exista saldo propio de Negocio, reemplazar este fallback al saldo del dueño.
+      petalosBalance: negocio.dueno.petalosSaldo,
+      petalos: negocio.dueno.petalosSaldo,
+      seguidoresCount: negocio._count.seguidores,
+      seguidores: negocio._count.seguidores,
       followersCount: negocio._count.seguidores,
-      resenasCount: negocio._count.resenas,
+      resenasCount: stats._count.id,
+      numeroResenas: stats._count.id,
       productosCount: negocio._count.productos,
       reservasCount: negocio._count.reservas,
-      mediaResenas:
-        typeof stats._avg.puntuacion === 'number'
-          ? Number(stats._avg.puntuacion.toFixed(1))
-          : 0,
+      mediaResenas,
+      ratingMedio: mediaResenas,
+      ratingPromedio: mediaResenas,
     };
   }
 
@@ -436,7 +454,13 @@ export class NegocioService {
 
   // CREATE
   async create(dto: CreateNegocioDto, currentUserId: number) {
-    if (dto.horario) validateHorarioShape(dto.horario);
+    const horario = this.normalizeHorarioPayload(dto.horario);
+    const reservasActivas = dto.reservasActivas ?? false;
+    this.assertReservasConfig(
+      reservasActivas,
+      dto.intervaloReserva,
+      horario ?? null,
+    );
 
     const slug = dto.slug?.trim()
       ? await this.resolveRequestedSlug(dto.slug)
@@ -453,7 +477,11 @@ export class NegocioService {
       subcategoriaId: dto.subcategoriaId,
       duenoId: currentUserId,
       intervaloReserva: dto.intervaloReserva,
-      horario: dto.horario ?? undefined,
+      reservasActivas,
+      horario:
+        horario && hasOpenDays(horario)
+          ? (horario as Prisma.InputJsonValue)
+          : undefined,
     };
 
     return this.prisma.$transaction(async (tx) => {
@@ -478,13 +506,25 @@ export class NegocioService {
   ) {
     const n = await this.prisma.negocio.findUnique({
       where: { id },
-      select: { duenoId: true },
+      select: {
+        duenoId: true,
+        slug: true,
+        horario: true,
+        intervaloReserva: true,
+        reservasActivas: true,
+      },
     });
     if (!n) throw new NotFoundException('Negocio no encontrado');
     if (!isAdmin && n.duenoId !== currentUserId)
       throw new ForbiddenException('No eres el dueño');
 
-    if (dto.horario) validateHorarioShape(dto.horario);
+    const horario =
+      dto.horario !== undefined
+        ? this.normalizeHorarioPayload(dto.horario)
+        : (n.horario as HorarioJson | null);
+    const intervaloReserva = dto.intervaloReserva ?? n.intervaloReserva;
+    const reservasActivas = dto.reservasActivas ?? n.reservasActivas;
+    this.assertReservasConfig(reservasActivas, intervaloReserva, horario);
 
     const data: any = {
       ...(dto.nombre !== undefined ? { nombre: dto.nombre.trim() } : {}),
@@ -524,7 +564,16 @@ export class NegocioService {
       ...(dto.intervaloReserva !== undefined
         ? { intervaloReserva: dto.intervaloReserva }
         : {}),
-      ...(dto.horario !== undefined ? { horario: dto.horario } : {}),
+      ...(dto.reservasActivas !== undefined
+        ? { reservasActivas: dto.reservasActivas }
+        : {}),
+      ...(dto.horario !== undefined
+        ? {
+            horario: this.toPrismaHorarioValue(
+              horario && hasOpenDays(horario) ? horario : null,
+            ),
+          }
+        : {}),
     };
 
     if (dto.slug !== undefined) {
@@ -534,16 +583,7 @@ export class NegocioService {
 
       data.slug = await this.resolveRequestedSlug(dto.slug, id);
     } else if (dto.nombre !== undefined) {
-      const negocioActual = await this.prisma.negocio.findUnique({
-        where: { id },
-        select: { slug: true },
-      });
-
-      if (!negocioActual) {
-        throw new NotFoundException('Negocio no encontrado');
-      }
-
-      if (!negocioActual.slug) {
+      if (!n.slug) {
         data.slug = await generateUniqueNegocioSlug(
           this.prisma,
           dto.nombre.trim(),
@@ -646,17 +686,32 @@ export class NegocioService {
   ) {
     const n = await this.prisma.negocio.findUnique({
       where: { id },
-      select: { duenoId: true },
+      select: {
+        duenoId: true,
+        horario: true,
+        intervaloReserva: true,
+        reservasActivas: true,
+      },
     });
     if (!n) throw new NotFoundException('Negocio no encontrado');
     if (!isAdmin && n.duenoId !== currentUserId)
       throw new ForbiddenException('No eres el dueño');
 
-    if (dto.horario) validateHorarioShape(dto.horario);
-
-    if (dto.intervaloReserva === undefined && dto.horario === undefined) {
+    if (
+      dto.intervaloReserva === undefined &&
+      dto.horario === undefined &&
+      dto.reservasActivas === undefined
+    ) {
       throw new BadRequestException('Nada que actualizar');
     }
+
+    const horario =
+      dto.horario !== undefined
+        ? this.normalizeHorarioPayload(dto.horario)
+        : (n.horario as HorarioJson | null);
+    const intervaloReserva = dto.intervaloReserva ?? n.intervaloReserva;
+    const reservasActivas = dto.reservasActivas ?? n.reservasActivas;
+    this.assertReservasConfig(reservasActivas, intervaloReserva, horario);
 
     return this.prisma.negocio.update({
       where: { id },
@@ -664,20 +719,85 @@ export class NegocioService {
         ...(dto.intervaloReserva !== undefined
           ? { intervaloReserva: dto.intervaloReserva }
           : {}),
-        ...(dto.horario !== undefined ? { horario: dto.horario } : {}),
+        ...(dto.reservasActivas !== undefined
+          ? { reservasActivas: dto.reservasActivas }
+          : {}),
+        ...(dto.horario !== undefined
+          ? {
+              horario: this.toPrismaHorarioValue(
+                horario && hasOpenDays(horario) ? horario : null,
+              ),
+            }
+          : {}),
       },
-      select: { id: true, nombre: true, intervaloReserva: true, horario: true },
-    });
+      select: {
+        id: true,
+        nombre: true,
+        intervaloReserva: true,
+        reservasActivas: true,
+        horario: true,
+      },
+    }).then((negocio) => ({
+      ...negocio,
+      horario: this.cleanHorarioForResponse(negocio.horario),
+    }));
   }
 
   // GET HORARIO
   async getHorario(id: number) {
     const neg = await this.prisma.negocio.findUnique({
       where: { id },
-      select: { id: true, nombre: true, intervaloReserva: true, horario: true },
+      select: {
+        id: true,
+        nombre: true,
+        intervaloReserva: true,
+        reservasActivas: true,
+        horario: true,
+      },
     });
     if (!neg) throw new NotFoundException('Negocio no encontrado');
-    return neg;
+    return {
+      ...neg,
+      horario: this.cleanHorarioForResponse(neg.horario),
+    };
+  }
+
+  async updateImagenes(
+    id: number,
+    dto: UpdateNegocioImagenesDto,
+    currentUserId: number,
+    isAdmin = false,
+  ) {
+    const n = await this.prisma.negocio.findUnique({
+      where: { id },
+      select: { duenoId: true },
+    });
+    if (!n) throw new NotFoundException('Negocio no encontrado');
+    if (!isAdmin && n.duenoId !== currentUserId) {
+      throw new ForbiddenException('No eres el dueño');
+    }
+
+    if (dto.fotoPerfil === undefined && dto.fotoPortada === undefined) {
+      throw new BadRequestException('No hay imagenes para actualizar');
+    }
+
+    return this.prisma.negocio.update({
+      where: { id },
+      data: {
+        ...(dto.fotoPerfil !== undefined
+          ? { fotoPerfil: dto.fotoPerfil?.trim() ?? null }
+          : {}),
+        ...(dto.fotoPortada !== undefined
+          ? { fotoPortada: dto.fotoPortada?.trim() ?? null }
+          : {}),
+      },
+      select: {
+        id: true,
+        nombre: true,
+        fotoPerfil: true,
+        fotoPortada: true,
+      },
+    });
   }
 
   async seguir(

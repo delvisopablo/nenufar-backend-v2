@@ -5,10 +5,12 @@ import {
   IsEmail,
   IsInt,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsPositive,
   IsString,
   MaxLength,
+  Min,
   MinLength,
   ValidateIf,
 } from 'class-validator';
@@ -194,4 +196,31 @@ export class RegisterNegocioDto {
   @IsString()
   @MaxLength(50)
   codigoNenufarizacion?: string;
+
+  @ApiPropertyOptional({
+    example: 'Pastelería artesanal con dulces de temporada',
+    description: 'Descripción corta del negocio (máx. 160 caracteres).',
+  })
+  @Transform(({ value }) => trimString(value))
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  descripcionCorta?: string;
+
+  @ApiPropertyOptional({
+    description: 'Horario semanal en formato JSON estructurado.',
+  })
+  @IsOptional()
+  @IsObject()
+  horario?: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    example: 30,
+    description: 'Intervalo de reserva en minutos (mín. 5).',
+  })
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(5)
+  intervaloReserva?: number;
 }

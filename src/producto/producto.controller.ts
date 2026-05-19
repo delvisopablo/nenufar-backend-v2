@@ -1,14 +1,27 @@
-/* eslint-disable prettier/prettier */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UnauthorizedException } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { EstadoSolicitudProducto } from '@prisma/client';
 import { ProductoService } from './producto.service';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
 import { UpdateProductoStockDto } from './dto/update-producto-stock.dto';
+import { CreateSolicitudProductoDto } from './dto/create-solicitud-producto.dto';
+import { RechazarSolicitudProductoDto } from './dto/rechazar-solicitud-producto.dto';
 
-// TODO: protege con JwtAuthGuard cuando tengas auth lista
 @Controller()
 export class ProductoController {
   constructor(private service: ProductoService) {}
@@ -21,7 +34,6 @@ export class ProductoController {
     return userId;
   }
 
-  // Lista por negocio: GET /negocios/:id/productos
   @Get('negocios/:id/productos')
   listByNegocio(
     @Param('id', ParseIntPipe) negocioId: number,
@@ -32,7 +44,6 @@ export class ProductoController {
     return this.service.listByNegocio(negocioId, q, page, limit);
   }
 
-  // Crear: POST /negocios/:id/productos
   @Post('negocios/:id/productos')
   create(
     @Param('id', ParseIntPipe) negocioId: number,
@@ -44,13 +55,42 @@ export class ProductoController {
     return this.service.create(negocioId, dto, currentUserId, isAdmin);
   }
 
-  // Detalle: GET /productos/:id
+  @Post('negocios/:id/solicitudes-producto')
+  crearSolicitud(
+    @Param('id', ParseIntPipe) negocioId: number,
+    @Body() dto: CreateSolicitudProductoDto,
+    @Req() req: any,
+  ) {
+    const currentUserId = this.getAuthenticatedUserId(req);
+    return this.service.crearSolicitud(negocioId, dto, currentUserId);
+  }
+
+  @Get('negocios/:id/solicitudes-producto')
+  listarSolicitudes(
+    @Param('id', ParseIntPipe) negocioId: number,
+    @Query('estado') estado: EstadoSolicitudProducto | undefined,
+    @Req() req: any,
+  ) {
+    const currentUserId = this.getAuthenticatedUserId(req);
+    const isAdmin = !!req.user?.isAdmin;
+    return this.service.listarSolicitudes(
+      negocioId,
+      currentUserId,
+      isAdmin,
+      estado,
+    );
+  }
+
+  @Get('productos/buscar')
+  search(@Query('q') q = '', @Query('limit') limit?: number) {
+    return this.service.search(q, limit);
+  }
+
   @Get('productos/:id')
   get(@Param('id', ParseIntPipe) id: number) {
     return this.service.getById(id);
   }
 
-  // Update: PATCH /productos/:id
   @Patch('productos/:id')
   update(
     @Param('id', ParseIntPipe) id: number,
@@ -73,11 +113,28 @@ export class ProductoController {
     return this.service.adjustStock(id, dto, currentUserId, isAdmin);
   }
 
-  // Delete: DELETE /productos/:id
   @Delete('productos/:id')
   remove(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     const currentUserId = this.getAuthenticatedUserId(req);
     const isAdmin = !!req.user?.isAdmin;
     return this.service.remove(id, currentUserId, isAdmin);
+  }
+
+  @Patch('solicitudes-producto/:id/aprobar')
+  aprobarSolicitud(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const currentUserId = this.getAuthenticatedUserId(req);
+    const isAdmin = !!req.user?.isAdmin;
+    return this.service.aprobarSolicitud(id, currentUserId, isAdmin);
+  }
+
+  @Patch('solicitudes-producto/:id/rechazar')
+  rechazarSolicitud(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RechazarSolicitudProductoDto,
+    @Req() req: any,
+  ) {
+    const currentUserId = this.getAuthenticatedUserId(req);
+    const isAdmin = !!req.user?.isAdmin;
+    return this.service.rechazarSolicitud(id, dto, currentUserId, isAdmin);
   }
 }

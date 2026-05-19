@@ -23,6 +23,7 @@ import {
   generateUniqueNegocioSlug,
   slugifyNegocioNombre,
 } from '../negocio/negocio-slug.util';
+import { hasOpenDays, HorarioJson } from '../negocio/horario.util';
 import { NenufarizarService } from '../nenufarizar/nenufarizar.service';
 import { AppError } from '../common/errors/app-error';
 
@@ -61,10 +62,20 @@ const authUserSelect = {
       id: true,
       nombre: true,
       slug: true,
+      duenoId: true,
       horario: true,
+      intervaloReserva: true,
+      reservasActivas: true,
       nenufarColor: true,
       nenufarActivo: true,
+      nenufarKey: true,
       nenufarAsset: true,
+      _count: {
+        select: {
+          seguidores: true,
+          resenas: true,
+        },
+      },
     },
   },
 } satisfies Prisma.UsuarioSelect;
@@ -100,9 +111,19 @@ const loginUserSelect = {
       id: true,
       nombre: true,
       slug: true,
+      duenoId: true,
       horario: true,
+      intervaloReserva: true,
+      reservasActivas: true,
       nenufarActivo: true,
+      nenufarKey: true,
       nenufarAsset: true,
+      _count: {
+        select: {
+          seguidores: true,
+          resenas: true,
+        },
+      },
     },
   },
 } satisfies Prisma.UsuarioSelect;
@@ -133,6 +154,8 @@ type RegisterNegocioResult = {
     nombre: string;
     slug: string | null;
     horario: Prisma.JsonValue | null;
+    intervaloReserva: number | null;
+    reservasActivas: boolean;
     nenufarColor: string | null;
     nenufarActivo: string | null;
     nenufarAsset: string | null;
@@ -582,8 +605,18 @@ export class AuthService {
     const negocio = negocioRecord
       ? {
           ...negocioRecord,
+          nickname: negocioRecord.slug ?? null,
+          horario:
+            negocioRecord.horario &&
+            hasOpenDays(negocioRecord.horario as HorarioJson)
+              ? negocioRecord.horario
+              : null,
           nenufarActivo:
             negocioRecord.nenufarActivo ?? negocioRecord.nenufarAsset ?? null,
+          // TODO: cuando exista saldo propio de Negocio, reemplazar este fallback al saldo del dueño.
+          petalosBalance: user.petalosSaldo,
+          seguidoresCount: negocioRecord._count?.seguidores ?? 0,
+          resenasCount: negocioRecord._count?.resenas ?? 0,
         }
       : null;
 
@@ -602,6 +635,7 @@ export class AuthService {
       rolGlobal: user.rolGlobal,
       rol: negocio ? 'negocio' : user.rolGlobal.toLowerCase(),
       petalosSaldo: user.petalosSaldo,
+      petalosBalance: user.petalosSaldo,
       negocio,
     };
   }
@@ -802,6 +836,7 @@ export class AuthService {
     const normalizedHistoria = normalizeOptionalString(
       dto.historia ?? dto.descripcion ?? dto.biografia,
     );
+    const normalizedDescripcionCorta = normalizeOptionalString(dto.descripcionCorta);
     const normalizedNenufarActivo = normalizeOptionalString(
       dto.nenufarActivo ?? dto.nenufarAsset,
     );
@@ -929,11 +964,18 @@ export class AuthService {
               nombre: normalizedBusinessName,
               slug: negocioSlug,
               historia: normalizedHistoria,
+              ...(normalizedDescripcionCorta ? { descripcionCorta: normalizedDescripcionCorta } : {}),
               direccion: normalizedDireccion,
               fechaFundacion,
               categoriaId: dto.categoriaId,
               ...(dto.subcategoriaId
                 ? { subcategoriaId: dto.subcategoriaId }
+                : {}),
+              ...(dto.horario
+                ? { horario: dto.horario as Prisma.InputJsonValue }
+                : {}),
+              ...(dto.intervaloReserva
+                ? { intervaloReserva: dto.intervaloReserva }
                 : {}),
               ...(normalizedNenufarActivo
                 ? {
@@ -948,6 +990,8 @@ export class AuthService {
               nombre: true,
               slug: true,
               horario: true,
+              intervaloReserva: true,
+              reservasActivas: true,
               nenufarColor: true,
               nenufarActivo: true,
               nenufarAsset: true,

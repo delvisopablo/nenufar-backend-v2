@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -10,28 +11,9 @@ import { UpdateResenaDto } from './dto/update-resena.dto';
 import { LogroEngineService } from '../logro/logro-engine.service';
 import { NotificacionService } from '../notificacion/notificacion.service';
 import {
-  mapNegocioPublic,
-  negocioPublicSelect,
-} from '../negocio/negocio-public.util';
-
-const resenaPublicSelect = {
-  id: true,
-  contenido: true,
-  puntuacion: true,
-  estado: true,
-  moderadoEn: true,
-  motivoModeracion: true,
-  selloNenufar: true,
-  usuarioId: true,
-  negocioId: true,
-  creadoEn: true,
-  actualizadoEn: true,
-  eliminadoEn: true,
-  usuario: { select: { id: true, nombre: true, foto: true } },
-  negocio: { select: negocioPublicSelect },
-} satisfies Prisma.ResenaSelect;
-
-type ResenaPublicRecord = Prisma.ResenaGetPayload<{ select: typeof resenaPublicSelect }>;
+  mapResenaPublic,
+  resenaPublicSelect,
+} from './resena-public.util';
 
 @Injectable()
 export class ResenaService {
@@ -40,15 +22,6 @@ export class ResenaService {
     private readonly notificaciones: NotificacionService,
     private readonly logroEngine: LogroEngineService,
   ) {}
-
-  private mapResena(resena: ResenaPublicRecord) {
-    return {
-      ...resena,
-      negocio: mapNegocioPublic(resena.negocio),
-      comentario: resena.contenido,
-      fecha: resena.creadoEn,
-    };
-  }
 
   /** Listado global (paginable si quieres luego) */
   async todasLasResenas() {
@@ -65,7 +38,7 @@ export class ResenaService {
       orderBy: { creadoEn: 'desc' },
     });
 
-    return resenas.map((resena) => this.mapResena(resena));
+    return resenas.map((resena) => mapResenaPublic(resena));
   }
 
   /** Reseñas por negocio */
@@ -84,7 +57,7 @@ export class ResenaService {
       orderBy: { creadoEn: 'desc' },
     });
 
-    return resenas.map((resena) => this.mapResena(resena));
+    return resenas.map((resena) => mapResenaPublic(resena));
   }
 
   /** Reseñas por usuario */
@@ -103,7 +76,7 @@ export class ResenaService {
       orderBy: { creadoEn: 'desc' },
     });
 
-    return resenas.map((resena) => this.mapResena(resena));
+    return resenas.map((resena) => mapResenaPublic(resena));
   }
 
   /** Últimas N reseñas (por defecto 10) */
@@ -122,7 +95,7 @@ export class ResenaService {
       select: resenaPublicSelect,
     });
 
-    return resenas.map((resena) => this.mapResena(resena));
+    return resenas.map((resena) => mapResenaPublic(resena));
   }
 
   /** Media de puntuación y número de reseñas de un negocio */
@@ -143,6 +116,9 @@ export class ResenaService {
 
   /** Crear reseña + post + pagar pétalos (+5 autor, +5 dueño si distinto) */
   async crear(userId: number, dto: CreateResenaDto) {
+    const productoIds = [...new Set(dto.productoIds ?? [])];
+    const productosSugeridos = dto.productosSugeridos ?? [];
+
     const { postId, resenaId } = await this.prisma.$transaction(async (tx) => {
       const negocio = await tx.negocio.findFirst({
         where: {
@@ -157,6 +133,24 @@ export class ResenaService {
         throw new NotFoundException('Negocio no encontrado');
       }
 
+      if (productoIds.length > 0) {
+        const productos = await tx.producto.findMany({
+          where: {
+            id: { in: productoIds },
+            negocioId: dto.negocioId,
+            activo: true,
+            eliminadoEn: null,
+          },
+          select: { id: true },
+        });
+
+        if (productos.length !== productoIds.length) {
+          throw new BadRequestException(
+            'Algunos productos no existen o no pertenecen al negocio',
+          );
+        }
+      }
+
       const resena = await tx.resena.create({
         data: {
           negocioId: dto.negocioId,
@@ -167,6 +161,44 @@ export class ResenaService {
         },
         select: { id: true },
       });
+
+      if (productoIds.length > 0) {
+        await tx.resenaProducto.createMany({
+          data: productoIds.map((productoId) => ({
+            resenaId: resena.id,
+            productoId,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      if (productosSugeridos.length > 0) {
+        const sugerenciasNormalizadas = productosSugeridos.map((item) => {
+          const nombre = item.nombre.trim();
+          if (!nombre) {
+            throw new BadRequestException(
+              'Los productos sugeridos deben tener nombre',
+            );
+          }
+
+          return {
+            nombre,
+            descripcion: item.descripcion?.trim() || null,
+            precioSugerido: item.precioSugerido ?? null,
+          };
+        });
+
+        await tx.solicitudProductoCatalogo.createMany({
+          data: sugerenciasNormalizadas.map((item) => ({
+            negocioId: dto.negocioId,
+            usuarioId: userId,
+            resenaId: resena.id,
+            nombre: item.nombre,
+            descripcion: item.descripcion,
+            precioSugerido: item.precioSugerido,
+          })),
+        });
+      }
 
       const post = await tx.post.create({
         data: {
@@ -243,7 +275,7 @@ export class ResenaService {
       throw new NotFoundException('Reseña no encontrada');
     }
 
-    return this.mapResena(resena);
+    return mapResenaPublic(resena);
   }
 
   /** Actualizar reseña (solo autor) */
@@ -268,7 +300,7 @@ export class ResenaService {
       select: resenaPublicSelect,
     });
 
-    return this.mapResena(updated);
+    return mapResenaPublic(updated);
   }
 
   /** Eliminar reseña (solo autor). No revertimos pétalos. */
@@ -286,6 +318,6 @@ export class ResenaService {
       select: resenaPublicSelect,
     });
 
-    return this.mapResena(deleted);
+    return mapResenaPublic(deleted);
   }
 }

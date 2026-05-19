@@ -37,6 +37,8 @@ function buildResena(overrides: Record<string, unknown> = {}) {
         nombre: 'Cafeteria',
       },
     },
+    productos: [],
+    productosSugeridos: [],
     ...overrides,
   };
 }
@@ -57,6 +59,15 @@ describe('ResenaService', () => {
     };
     post: {
       create: jest.Mock;
+    };
+    producto: {
+      findMany: jest.Mock;
+    };
+    resenaProducto: {
+      createMany: jest.Mock;
+    };
+    solicitudProductoCatalogo: {
+      createMany: jest.Mock;
     };
     usuario: {
       update: jest.Mock;
@@ -88,6 +99,15 @@ describe('ResenaService', () => {
       post: {
         create: jest.fn(),
       },
+      producto: {
+        findMany: jest.fn(),
+      },
+      resenaProducto: {
+        createMany: jest.fn(),
+      },
+      solicitudProductoCatalogo: {
+        createMany: jest.fn(),
+      },
       usuario: {
         update: jest.fn(),
       },
@@ -102,6 +122,9 @@ describe('ResenaService', () => {
           resena: prisma.resena,
           negocio: prisma.negocio,
           post: prisma.post,
+          producto: prisma.producto,
+          resenaProducto: prisma.resenaProducto,
+          solicitudProductoCatalogo: prisma.solicitudProductoCatalogo,
           usuario: prisma.usuario,
           petaloTx: prisma.petaloTx,
         }),
@@ -173,6 +196,103 @@ describe('ResenaService', () => {
     expect(segunda).not.toHaveProperty('producto');
   });
 
+  it('vincula productos existentes y crea solicitudes sugeridas al publicar la reseña', async () => {
+    prisma.negocio.findFirst.mockResolvedValue({ duenoId: 50 });
+    prisma.producto.findMany.mockResolvedValue([{ id: 11 }, { id: 12 }]);
+    prisma.resena.create.mockResolvedValue({ id: 701 });
+    prisma.resenaProducto.createMany.mockResolvedValue({ count: 2 });
+    prisma.solicitudProductoCatalogo.createMany.mockResolvedValue({ count: 1 });
+    prisma.post.create.mockResolvedValue({ id: 801 });
+    prisma.usuario.update.mockResolvedValue({ petalosSaldo: 20 });
+    prisma.petaloTx.create.mockResolvedValue({});
+    prisma.resena.findUnique.mockResolvedValue(
+      buildResena({
+        id: 701,
+        productos: [
+          {
+            producto: {
+              id: 11,
+              negocioId: 3,
+              nombre: 'Corte',
+              descripcion: 'Corte basico',
+              precio: 10,
+              foto: null,
+              codigoProducto: 'PROD-000011',
+              codigoSKU: null,
+              activo: true,
+              creadoEn: new Date('2026-05-11T10:00:00.000Z'),
+              actualizadoEn: new Date('2026-05-11T10:00:00.000Z'),
+              eliminadoEn: null,
+            },
+          },
+        ],
+        productosSugeridos: [
+          {
+            id: 901,
+            negocioId: 3,
+            usuarioId: 7,
+            resenaId: 701,
+            productoId: null,
+            nombre: 'Corte frances',
+            descripcion: 'Servicio recibido',
+            precioSugerido: 12,
+            estado: 'PENDIENTE',
+            motivoRechazo: null,
+            creadoEn: new Date('2026-05-11T10:00:00.000Z'),
+            actualizadoEn: new Date('2026-05-11T10:00:00.000Z'),
+          },
+        ],
+      }),
+    );
+
+    const result = await service.crear(7, {
+      negocioId: 3,
+      puntuacion: 5,
+      contenido: 'Muy bien',
+      productoIds: [11, 12],
+      productosSugeridos: [
+        {
+          nombre: 'Corte frances',
+          precioSugerido: 12,
+          descripcion: 'Servicio recibido',
+        },
+      ],
+    });
+
+    expect(prisma.resenaProducto.createMany).toHaveBeenCalledWith({
+      data: [
+        { resenaId: 701, productoId: 11 },
+        { resenaId: 701, productoId: 12 },
+      ],
+      skipDuplicates: true,
+    });
+    expect(prisma.solicitudProductoCatalogo.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          negocioId: 3,
+          usuarioId: 7,
+          resenaId: 701,
+          nombre: 'Corte frances',
+          descripcion: 'Servicio recibido',
+          precioSugerido: 12,
+        },
+      ],
+    });
+    expect(result.productos).toEqual([
+      expect.objectContaining({
+        id: 11,
+        codigoProducto: 'PROD-000011',
+      }),
+    ]);
+    expect(result.productosSugeridos).toEqual([
+      expect.objectContaining({
+        id: 901,
+        nombre: 'Corte frances',
+        estado: 'PENDIENTE',
+      }),
+    ]);
+  });
+
   it('crea una reseña sin intentar asociar producto', async () => {
     prisma.negocio.findFirst.mockResolvedValue({ duenoId: 7 });
     prisma.resena.create.mockResolvedValue({ id: 301 });
@@ -203,6 +323,8 @@ describe('ResenaService', () => {
       }),
     );
     expect(result).not.toHaveProperty('producto');
+    expect(result.productos).toEqual([]);
+    expect(result.productosSugeridos).toEqual([]);
   });
 
   it('omite producto en las reseñas por negocio', async () => {

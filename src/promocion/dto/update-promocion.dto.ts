@@ -12,7 +12,7 @@ import {
   ArrayUnique,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
-import { TipoDescuento } from '@prisma/client';
+import { ContenidoEstado, TipoDescuento } from '@prisma/client';
 
 export class UpdatePromocionDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
@@ -63,6 +63,10 @@ export class UpdatePromocionDto {
   @IsOptional()
   @IsBoolean()
   activa?: boolean;
+
+  @IsOptional()
+  @IsEnum(ContenidoEstado)
+  estado?: ContenidoEstado;
 
   @IsOptional()
   @Type(() => Number)

@@ -2,15 +2,30 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { RolGlobal } from '@prisma/client';
+import {
+  EstadoSolicitudProducto,
+  Prisma,
+  RolGlobal,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
 import { UpdateProductoStockDto } from './dto/update-producto-stock.dto';
+import { CreateSolicitudProductoDto } from './dto/create-solicitud-producto.dto';
+import { RechazarSolicitudProductoDto } from './dto/rechazar-solicitud-producto.dto';
+import {
+  buildCodigoProducto,
+  mapProductoCatalogo,
+  mapSolicitudProductoCatalogo,
+  normalizeCatalogCode,
+  productoCatalogSelect,
+  solicitudProductoSelect,
+} from './producto-catalogo.util';
 
 function toPaging(page?: number | string, limit?: number | string) {
   const p = Math.max(1, Number(page ?? 1) | 0);
@@ -35,10 +50,12 @@ export class ProductoService {
   ) {
     const negocio = await this.prisma.negocio.findUnique({
       where: { id: negocioId },
-      select: { id: true, duenoId: true },
+      select: { id: true, duenoId: true, activo: true, eliminadoEn: true },
     });
 
-    if (!negocio) throw new NotFoundException('Negocio no encontrado');
+    if (!negocio || !negocio.activo || negocio.eliminadoEn) {
+      throw new NotFoundException('Negocio no encontrado');
+    }
 
     if (isAdmin || negocio.duenoId === currentUserId) {
       return negocio;
@@ -59,49 +76,63 @@ export class ProductoService {
     throw new ForbiddenException('No eres el dueño');
   }
 
-  /** Lista productos de un negocio */
-  async listByNegocio(
+  private async assertResenaPerteneceAUsuario(
+    tx: Prisma.TransactionClient,
+    resenaId: number,
     negocioId: number,
-    q?: string,
-    page?: number | string,
-    limit?: number | string,
+    userId: number,
   ) {
-    const { skip, take, page: p, limit: l } = toPaging(page, limit);
-    const where: any = { negocioId };
-    if (q) where.nombre = { contains: q, mode: 'insensitive' as const };
-
-    const [items, total] = await this.prisma.$transaction([
-      this.prisma.producto.findMany({
-        where,
-        orderBy: { id: 'desc' },
-        skip,
-        take,
-      }),
-      this.prisma.producto.count({ where }),
-    ]);
-
-    return { items, total, page: p, limit: l };
-  }
-
-  async getById(id: number) {
-    const prod = await this.prisma.producto.findUnique({
-      where: { id },
-      include: {
-        negocio: { select: { id: true, nombre: true, duenoId: true } },
+    const resena = await tx.resena.findFirst({
+      where: {
+        id: resenaId,
+        negocioId,
+        usuarioId: userId,
       },
+      select: { id: true },
     });
-    if (!prod) throw new NotFoundException('Producto no encontrado');
-    return prod;
+
+    if (!resena) {
+      throw new BadRequestException(
+        'La reseña indicada no existe o no pertenece al usuario',
+      );
+    }
   }
 
-  /** Crea producto dentro de un negocio (solo dueño o admin) */
-  async create(
+  private async createCatalogProduct(
+    tx: Prisma.TransactionClient,
     negocioId: number,
-    dto: CreateProductoDto,
-    currentUserId: number,
-    isAdmin = false,
+    dto: {
+      nombre: string;
+      descripcion?: string | null;
+      precio?: number | Prisma.Decimal | null;
+      foto?: string | null;
+      codigoProducto?: string | null;
+      codigoSKU?: string | null;
+      stockDisponible?: number | null;
+      stockReservado?: number | null;
+    },
+    options?: {
+      allowNullPrice?: boolean;
+    },
   ) {
-    await this.assertCanManageNegocio(negocioId, currentUserId, isAdmin);
+    const nombre = dto.nombre.trim();
+    if (!nombre) {
+      throw new BadRequestException('El nombre del producto es obligatorio');
+    }
+
+    if (
+      (dto.precio === undefined || dto.precio === null) &&
+      !options?.allowNullPrice
+    ) {
+      throw new BadRequestException('El precio del producto es obligatorio');
+    }
+
+    if (dto.precio !== undefined && dto.precio !== null) {
+      const precioNumerico = Number(dto.precio);
+      if (Number.isNaN(precioNumerico) || precioNumerico < 0) {
+        throw new BadRequestException('El precio no puede ser negativo');
+      }
+    }
 
     const stockDisponible = dto.stockDisponible ?? 0;
     const stockReservado = dto.stockReservado ?? 0;
@@ -114,21 +145,184 @@ export class ProductoService {
       );
     }
 
-    return this.prisma.producto.create({
-      data: {
-        negocioId,
-        nombre: dto.nombre.trim(),
-        ...(dto.descripcion !== undefined
-          ? { descripcion: trimOptionalString(dto.descripcion) }
-          : {}),
-        precio: dto.precio,
-        ...(dto.codigoSKU !== undefined
-          ? { codigoSKU: trimOptionalString(dto.codigoSKU) }
-          : {}),
-        stockDisponible,
-        stockReservado,
+    const codigoProducto = normalizeCatalogCode(dto.codigoProducto);
+    const codigoSKU = normalizeCatalogCode(dto.codigoSKU);
+
+    try {
+      let producto = await tx.producto.create({
+        data: {
+          negocioId,
+          nombre,
+          descripcion: trimOptionalString(dto.descripcion ?? undefined),
+          precio: dto.precio ?? null,
+          foto: trimOptionalString(dto.foto ?? undefined),
+          codigoProducto,
+          codigoSKU: codigoSKU ?? codigoProducto,
+          stockDisponible,
+          stockReservado,
+        },
+        select: productoCatalogSelect,
+      });
+
+      if (!producto.codigoProducto) {
+        const generatedCode = buildCodigoProducto(producto.id);
+        producto = await tx.producto.update({
+          where: { id: producto.id },
+          data: {
+            codigoProducto: generatedCode,
+            ...(producto.codigoSKU ? {} : { codigoSKU: generatedCode }),
+          },
+          select: productoCatalogSelect,
+        });
+      }
+
+      return producto;
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'Ya existe un producto con ese código en el catálogo',
+        );
+      }
+      throw error;
+    }
+  }
+
+  /** Lista productos activos de un negocio */
+  async listByNegocio(
+    negocioId: number,
+    q?: string,
+    page?: number | string,
+    limit?: number | string,
+  ) {
+    const { skip, take, page: p, limit: l } = toPaging(page, limit);
+    const term = q?.trim();
+    const where: Prisma.ProductoWhereInput = {
+      negocioId,
+      activo: true,
+      eliminadoEn: null,
+      negocio: {
+        activo: true,
+        eliminadoEn: null,
+      },
+      ...(term
+        ? {
+            OR: [
+              { nombre: { contains: term, mode: 'insensitive' } },
+              { descripcion: { contains: term, mode: 'insensitive' } },
+              { codigoProducto: { contains: term, mode: 'insensitive' } },
+              { codigoSKU: { contains: term, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.producto.findMany({
+        where,
+        select: productoCatalogSelect,
+        orderBy: [{ nombre: 'asc' }, { id: 'asc' }],
+        skip,
+        take,
+      }),
+      this.prisma.producto.count({ where }),
+    ]);
+
+    return {
+      items: items.map((item) => mapProductoCatalogo(item)),
+      total,
+      page: p,
+      limit: l,
+    };
+  }
+
+  async search(q: string, limit?: number | string) {
+    const term = q.trim();
+    if (!term) {
+      return { items: [], total: 0 };
+    }
+
+    const take = Math.max(1, Math.min(50, Number(limit ?? 20) | 0));
+    const items = await this.prisma.producto.findMany({
+      where: {
+        activo: true,
+        eliminadoEn: null,
+        negocio: {
+          activo: true,
+          eliminadoEn: null,
+        },
+        OR: [
+          { nombre: { contains: term, mode: 'insensitive' } },
+          { descripcion: { contains: term, mode: 'insensitive' } },
+          { codigoProducto: { contains: term, mode: 'insensitive' } },
+          { codigoSKU: { contains: term, mode: 'insensitive' } },
+          {
+            negocio: {
+              nombre: { contains: term, mode: 'insensitive' },
+            },
+          },
+          {
+            negocio: {
+              slug: { contains: term, mode: 'insensitive' },
+            },
+          },
+        ],
+      },
+      select: {
+        ...productoCatalogSelect,
+        negocio: {
+          select: {
+            id: true,
+            nombre: true,
+            slug: true,
+          },
+        },
+      },
+      orderBy: [{ nombre: 'asc' }, { id: 'asc' }],
+      take,
+    });
+
+    return {
+      items: items.map((item) => ({
+        ...mapProductoCatalogo(item),
+        negocio: item.negocio,
+        slug: item.negocio.slug,
+      })),
+      total: items.length,
+    };
+  }
+
+  async getById(id: number) {
+    const prod = await this.prisma.producto.findUnique({
+      where: { id },
+      select: {
+        ...productoCatalogSelect,
+        negocio: { select: { id: true, nombre: true, slug: true, duenoId: true } },
       },
     });
+    if (!prod) throw new NotFoundException('Producto no encontrado');
+    return {
+      ...mapProductoCatalogo(prod),
+      negocio: prod.negocio,
+    };
+  }
+
+  /** Crea producto dentro de un negocio (solo dueño o admin) */
+  async create(
+    negocioId: number,
+    dto: CreateProductoDto,
+    currentUserId: number,
+    isAdmin = false,
+  ) {
+    await this.assertCanManageNegocio(negocioId, currentUserId, isAdmin);
+
+    const producto = await this.prisma.$transaction((tx) =>
+      this.createCatalogProduct(tx, negocioId, dto),
+    );
+
+    return mapProductoCatalogo(producto);
   }
 
   /** Actualiza producto (solo dueño del negocio o admin) */
@@ -160,28 +354,55 @@ export class ProductoService {
       );
     }
 
-    return this.prisma.producto.update({
-      where: { id },
-      data: {
-        ...(dto.nombre ? { nombre: dto.nombre.trim() } : {}),
-        ...(dto.descripcion !== undefined
-          ? { descripcion: trimOptionalString(dto.descripcion) }
-          : {}),
-        ...(dto.precio !== undefined ? { precio: dto.precio } : {}),
-        ...(dto.codigoSKU !== undefined
-          ? { codigoSKU: trimOptionalString(dto.codigoSKU) }
-          : {}),
-        ...(dto.stockDisponible !== undefined
-          ? { stockDisponible: dto.stockDisponible }
-          : {}),
-        ...(dto.stockReservado !== undefined
-          ? { stockReservado: dto.stockReservado }
-          : {}),
-      },
-    });
+    try {
+      if (dto.nombre !== undefined && !dto.nombre.trim()) {
+        throw new BadRequestException('El nombre del producto no puede estar vacío');
+      }
+
+      const updated = await this.prisma.producto.update({
+        where: { id },
+        data: {
+          ...(dto.nombre !== undefined ? { nombre: dto.nombre.trim() } : {}),
+          ...(dto.descripcion !== undefined
+            ? { descripcion: trimOptionalString(dto.descripcion) }
+            : {}),
+          ...(dto.precio !== undefined ? { precio: dto.precio } : {}),
+          ...(dto.foto !== undefined
+            ? { foto: trimOptionalString(dto.foto) }
+            : {}),
+          ...(dto.codigoProducto !== undefined
+            ? {
+                codigoProducto: normalizeCatalogCode(dto.codigoProducto),
+              }
+            : {}),
+          ...(dto.codigoSKU !== undefined
+            ? { codigoSKU: normalizeCatalogCode(dto.codigoSKU) }
+            : {}),
+          ...(dto.stockDisponible !== undefined
+            ? { stockDisponible: dto.stockDisponible }
+            : {}),
+          ...(dto.stockReservado !== undefined
+            ? { stockReservado: dto.stockReservado }
+            : {}),
+        },
+        select: productoCatalogSelect,
+      });
+
+      return mapProductoCatalogo(updated);
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'Ya existe un producto con ese código en el catálogo',
+        );
+      }
+      throw error;
+    }
   }
 
-  /** Elimina producto (solo dueño o admin). Bloqueará si hay líneas de pedido. */
+  /** Borrado lógico del producto (solo dueño o admin) */
   async remove(id: number, currentUserId: number, isAdmin = false) {
     const prod = await this.prisma.producto.findUnique({
       where: { id },
@@ -190,7 +411,16 @@ export class ProductoService {
     if (!prod) throw new NotFoundException('Producto no encontrado');
     await this.assertCanManageNegocio(prod.negocioId, currentUserId, isAdmin);
 
-    return this.prisma.producto.delete({ where: { id } });
+    const deleted = await this.prisma.producto.update({
+      where: { id },
+      data: {
+        activo: false,
+        eliminadoEn: new Date(),
+      },
+      select: productoCatalogSelect,
+    });
+
+    return mapProductoCatalogo(deleted);
   }
 
   async adjustStock(
@@ -218,7 +448,8 @@ export class ProductoService {
 
     const nextStockDisponible =
       producto.stockDisponible + (dto.deltaDisponible ?? 0);
-    const nextStockReservado = producto.stockReservado + (dto.deltaReservado ?? 0);
+    const nextStockReservado =
+      producto.stockReservado + (dto.deltaReservado ?? 0);
 
     if (nextStockDisponible < 0 || nextStockReservado < 0) {
       throw new BadRequestException('El ajuste dejaría el stock en negativo');
@@ -236,15 +467,211 @@ export class ProductoService {
         stockDisponible: nextStockDisponible,
         stockReservado: nextStockReservado,
       },
+      select: productoCatalogSelect,
     });
 
     return {
-      ...updated,
+      ...mapProductoCatalogo(updated),
       ajuste: {
         deltaDisponible: dto.deltaDisponible ?? 0,
         deltaReservado: dto.deltaReservado ?? 0,
         motivo: dto.motivo ?? null,
       },
     };
+  }
+
+  async crearSolicitud(
+    negocioId: number,
+    dto: CreateSolicitudProductoDto,
+    userId: number,
+  ) {
+    const nombre = dto.nombre.trim();
+    if (!nombre) {
+      throw new BadRequestException('El nombre de la sugerencia es obligatorio');
+    }
+
+    const solicitud = await this.prisma.$transaction(async (tx) => {
+      const negocio = await tx.negocio.findFirst({
+        where: {
+          id: negocioId,
+          activo: true,
+          eliminadoEn: null,
+        },
+        select: { id: true },
+      });
+
+      if (!negocio) {
+        throw new NotFoundException('Negocio no encontrado');
+      }
+
+      if (dto.resenaId) {
+        await this.assertResenaPerteneceAUsuario(
+          tx,
+          dto.resenaId,
+          negocioId,
+          userId,
+        );
+      }
+
+      return tx.solicitudProductoCatalogo.create({
+        data: {
+          negocioId,
+          usuarioId: userId,
+          resenaId: dto.resenaId ?? null,
+          nombre,
+          descripcion: trimOptionalString(dto.descripcion),
+          precioSugerido: dto.precioSugerido ?? null,
+        },
+        select: solicitudProductoSelect,
+      });
+    });
+
+    return mapSolicitudProductoCatalogo(solicitud);
+  }
+
+  async listarSolicitudes(
+    negocioId: number,
+    actorUserId: number,
+    isAdmin = false,
+    estado?: EstadoSolicitudProducto,
+  ) {
+    await this.assertCanManageNegocio(negocioId, actorUserId, isAdmin);
+
+    const items = await this.prisma.solicitudProductoCatalogo.findMany({
+      where: {
+        negocioId,
+        ...(estado ? { estado } : {}),
+      },
+      select: {
+        ...solicitudProductoSelect,
+        usuario: {
+          select: { id: true, nombre: true, nickname: true, foto: true },
+        },
+        producto: {
+          select: productoCatalogSelect,
+        },
+      },
+      orderBy: [{ creadoEn: 'desc' }, { id: 'desc' }],
+    });
+
+    return items.map((item) => ({
+      ...mapSolicitudProductoCatalogo(item),
+      producto: item.producto ? mapProductoCatalogo(item.producto) : null,
+      usuario: item.usuario,
+    }));
+  }
+
+  async aprobarSolicitud(
+    id: number,
+    actorUserId: number,
+    isAdmin = false,
+  ) {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const solicitud = await tx.solicitudProductoCatalogo.findUnique({
+        where: { id },
+        select: solicitudProductoSelect,
+      });
+
+      if (!solicitud) {
+        throw new NotFoundException('Solicitud no encontrada');
+      }
+
+      await this.assertCanManageNegocio(
+        solicitud.negocioId,
+        actorUserId,
+        isAdmin,
+      );
+
+      if (solicitud.estado !== EstadoSolicitudProducto.PENDIENTE) {
+        throw new BadRequestException(
+          'Solo se pueden aprobar solicitudes pendientes',
+        );
+      }
+
+      const producto = await this.createCatalogProduct(
+        tx,
+        solicitud.negocioId,
+        {
+          nombre: solicitud.nombre,
+          descripcion: solicitud.descripcion,
+          precio:
+            solicitud.precioSugerido instanceof Prisma.Decimal
+              ? Number(solicitud.precioSugerido.toString())
+              : solicitud.precioSugerido ?? null,
+        },
+        { allowNullPrice: true },
+      );
+
+      if (solicitud.resenaId) {
+        await tx.resenaProducto.upsert({
+          where: {
+            resenaId_productoId: {
+              resenaId: solicitud.resenaId,
+              productoId: producto.id,
+            },
+          },
+          update: {},
+          create: {
+            resenaId: solicitud.resenaId,
+            productoId: producto.id,
+          },
+        });
+      }
+
+      const updatedSolicitud = await tx.solicitudProductoCatalogo.update({
+        where: { id: solicitud.id },
+        data: {
+          estado: EstadoSolicitudProducto.APROBADA,
+          motivoRechazo: null,
+          productoId: producto.id,
+        },
+        select: solicitudProductoSelect,
+      });
+
+      return {
+        solicitud: updatedSolicitud,
+        producto,
+      };
+    });
+
+    return {
+      solicitud: mapSolicitudProductoCatalogo(result.solicitud),
+      producto: mapProductoCatalogo(result.producto),
+    };
+  }
+
+  async rechazarSolicitud(
+    id: number,
+    dto: RechazarSolicitudProductoDto,
+    actorUserId: number,
+    isAdmin = false,
+  ) {
+    const solicitud = await this.prisma.solicitudProductoCatalogo.findUnique({
+      where: { id },
+      select: solicitudProductoSelect,
+    });
+
+    if (!solicitud) {
+      throw new NotFoundException('Solicitud no encontrada');
+    }
+
+    await this.assertCanManageNegocio(solicitud.negocioId, actorUserId, isAdmin);
+
+    if (solicitud.estado !== EstadoSolicitudProducto.PENDIENTE) {
+      throw new BadRequestException(
+        'Solo se pueden rechazar solicitudes pendientes',
+      );
+    }
+
+    const updated = await this.prisma.solicitudProductoCatalogo.update({
+      where: { id },
+      data: {
+        estado: EstadoSolicitudProducto.RECHAZADA,
+        motivoRechazo: trimOptionalString(dto.motivoRechazo) ?? null,
+      },
+      select: solicitudProductoSelect,
+    });
+
+    return mapSolicitudProductoCatalogo(updated);
   }
 }

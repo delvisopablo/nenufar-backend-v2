@@ -1,4 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ContenidoEstado, EstadoCuenta, ReservaEstado } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -158,6 +162,7 @@ describe('NegocioService', () => {
       fotoPerfil: null,
       fotoPortada: null,
       nenufarColor: null,
+      nenufarActivo: null,
       nenufarKey: null,
       nenufarAsset: null,
       telefono: null,
@@ -168,6 +173,7 @@ describe('NegocioService', () => {
       activo: true,
       horario: null,
       intervaloReserva: null,
+      reservasActivas: false,
       categoria: { id: 1, nombre: 'Belleza' },
       subcategoria: null,
       duenoId: 9,
@@ -208,9 +214,101 @@ describe('NegocioService', () => {
       expect.objectContaining({
         id: 44,
         slug: 'peluqueria-pocos-pelos',
+        nenufarActivo: null,
         mediaResenas: 4.5,
       }),
     );
+  });
+
+  it('setConfigHorario normaliza el horario semanal del frontend', async () => {
+    prisma.negocio.findUnique.mockResolvedValue({
+      duenoId: 9,
+      horario: null,
+      intervaloReserva: null,
+      reservasActivas: false,
+    });
+    prisma.negocio.update.mockResolvedValue({
+      id: 44,
+      nombre: 'Peluqueria Pocos Pelos',
+      intervaloReserva: 30,
+      reservasActivas: true,
+      horario: {
+        weekly: {
+          mon: [['10:00', '20:00']],
+          tue: [['10:00', '20:00']],
+          wed: [],
+          thu: [],
+          fri: [],
+          sat: [],
+          sun: [],
+        },
+      },
+    });
+
+    await service.setConfigHorario(
+      44,
+      {
+        reservasActivas: true,
+        intervaloReserva: 30,
+        horario: {
+          lunes: { abierto: true, apertura: '10:00', cierre: '20:00' },
+          martes: { abierto: true, apertura: '10:00', cierre: '20:00' },
+          domingo: { abierto: false },
+        },
+      },
+      9,
+    );
+
+    expect(prisma.negocio.update).toHaveBeenCalledWith({
+      where: { id: 44 },
+      data: {
+        intervaloReserva: 30,
+        reservasActivas: true,
+        horario: {
+          weekly: {
+            mon: [['10:00', '20:00']],
+            tue: [['10:00', '20:00']],
+            wed: [],
+            thu: [],
+            fri: [],
+            sat: [],
+            sun: [],
+          },
+        },
+      },
+      select: {
+        id: true,
+        nombre: true,
+        intervaloReserva: true,
+        reservasActivas: true,
+        horario: true,
+      },
+    });
+  });
+
+  it('setConfigHorario rechaza activar reservas sin dias abiertos', async () => {
+    prisma.negocio.findUnique.mockResolvedValue({
+      duenoId: 9,
+      horario: null,
+      intervaloReserva: null,
+      reservasActivas: false,
+    });
+
+    await expect(
+      service.setConfigHorario(
+        44,
+        {
+          reservasActivas: true,
+          intervaloReserva: 30,
+          horario: {
+            domingo: { abierto: false },
+          },
+        },
+        9,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.negocio.update).not.toHaveBeenCalled();
   });
 
   it('remove devuelve NotFound si el negocio no existe', async () => {

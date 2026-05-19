@@ -35,18 +35,18 @@ export class ReservaController {
     return userId;
   }
 
-  @Get('negocios/:id/availability')
-  availability(
-    @Param('id', ParseIntPipe) id: number,
-    @Query('date') date: string,
-    @Query('recursoId') recursoId?: string,
-  ) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) {
-      throw new BadRequestException('date debe ser YYYY-MM-DD');
+  private parseAvailabilityDate(date?: string, fecha?: string) {
+    const resolvedDate = (fecha ?? date ?? '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(resolvedDate)) {
+      throw new BadRequestException('fecha debe ser YYYY-MM-DD');
     }
+    return resolvedDate;
+  }
 
+  private parseRecursoId(recursoId?: string) {
     const parsedRecursoId =
       recursoId !== undefined ? Number(recursoId) : undefined;
+
     if (
       recursoId !== undefined &&
       (!Number.isInteger(parsedRecursoId) ||
@@ -55,7 +55,35 @@ export class ReservaController {
       throw new BadRequestException('recursoId inválido');
     }
 
-    return this.service.availability(id, date, parsedRecursoId);
+    return parsedRecursoId;
+  }
+
+  @Get('negocios/:id/availability')
+  availability(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('date') date?: string,
+    @Query('fecha') fecha?: string,
+    @Query('recursoId') recursoId?: string,
+  ) {
+    return this.service.availability(
+      id,
+      this.parseAvailabilityDate(date, fecha),
+      this.parseRecursoId(recursoId),
+    );
+  }
+
+  @Get('negocios/:id/disponibilidad')
+  disponibilidad(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('fecha') fecha?: string,
+    @Query('date') date?: string,
+    @Query('recursoId') recursoId?: string,
+  ) {
+    return this.service.availabilityDetailed(
+      id,
+      this.parseAvailabilityDate(date, fecha),
+      this.parseRecursoId(recursoId),
+    );
   }
 
   @UseGuards(JwtAuthGuard)
@@ -95,6 +123,22 @@ export class ReservaController {
       dto.recursoId,
       dto.duracionMinutos,
       dto.numPersonas,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('negocios/:id/reservas/resumen')
+  resumenPorDia(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('desde') desde: string | undefined,
+    @Query('dias') dias: string | undefined,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.resumenPorDia(
+      id,
+      this.getAuthenticatedUserId(req),
+      desde,
+      dias,
     );
   }
 

@@ -1,7 +1,9 @@
 import { Transform } from 'class-transformer';
 import {
+  IsBoolean,
   IsDateString,
   IsInt,
+  IsObject,
   IsOptional,
   IsString,
   MaxLength,
@@ -87,5 +89,10 @@ export class UpdateNegocioDto {
   intervaloReserva?: number;
 
   @IsOptional()
+  @IsObject()
   horario?: any;
+
+  @IsOptional()
+  @IsBoolean()
+  reservasActivas?: boolean;
 }

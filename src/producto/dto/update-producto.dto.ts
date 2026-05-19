@@ -6,6 +6,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class UpdateProductoDto {
   @IsString()
@@ -18,6 +19,7 @@ export class UpdateProductoDto {
   @MaxLength(2000)
   descripcion?: string;
 
+  @Type(() => Number)
   @IsNumber()
   @IsOptional()
   @Min(0)
@@ -28,11 +30,23 @@ export class UpdateProductoDto {
   @MaxLength(120)
   codigoSKU?: string;
 
+  @IsString()
+  @IsOptional()
+  @MaxLength(120)
+  codigoProducto?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(2000)
+  foto?: string;
+
+  @Type(() => Number)
   @IsInt()
   @IsOptional()
   @Min(0)
   stockDisponible?: number;
 
+  @Type(() => Number)
   @IsInt()
   @IsOptional()
   @Min(0)

@@ -8,32 +8,64 @@ import {
 import { Prisma, ReservaEstado, RolGlobal } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LogroEngineService } from '../logro/logro-engine.service';
+import {
+  HorarioJson,
+  buildAvailabilitySlots,
+  dateFromYMDAndMinutes,
+  getRangosParaFecha,
+  toMinutes,
+} from '../negocio/horario.util';
 import { QueryNegocioReservasDto } from './dto/query-negocio-reservas.dto';
 import { UpdateReservaEstadoDto } from './dto/update-reserva-estado.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
 
-type Horario = {
-  weekly?: Record<string, [string, string][]>;
-  exceptions?: Record<string, [string, string][]>;
-  apertura?: string;
-  cierre?: string;
+type AvailabilitySlot = {
+  hora: string;
+  disponible: boolean;
+  fecha: string;
 };
 
-function dayKey(d: Date) {
-  const names = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-  return names[d.getDay()];
+type AvailabilityDetail = {
+  fecha: string;
+  date: string;
+  reservasActivas: boolean;
+  intervaloReserva: number | null;
+  intervalo: number | null;
+  recursoId: number | null;
+  slots: AvailabilitySlot[];
+};
+
+function pad2(value: number) {
+  return value.toString().padStart(2, '0');
 }
 
-function toMinutes(hhmm: string) {
-  const [h, m] = hhmm.split(':').map(Number);
-  return h * 60 + (m || 0);
+function parseYMD(value: string, label: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new BadRequestException(`${label} debe ser YYYY-MM-DD`);
+  }
+
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, month - 1, day, 0, 0, 0, 0);
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    throw new BadRequestException(`${label} debe ser una fecha válida`);
+  }
+
+  return date;
 }
 
-function dateFromYMDAndMinutes(ymd: string, mins: number) {
-  const [Y, M, D] = ymd.split('-').map(Number);
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return new Date(Y, M - 1, D, h, m, 0, 0);
+function formatYMD(date: Date) {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(
+    date.getDate(),
+  )}`;
+}
+
+function formatHHmm(date: Date) {
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 }
 
 @Injectable()
@@ -85,6 +117,32 @@ export class ReservaService {
     throw new ForbiddenException('No tienes permisos para gestionar este negocio');
   }
 
+  private async canEditNegocioReservas(negocioId: number, actorUserId: number) {
+    if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
+      throw new UnauthorizedException('Autenticación requerida');
+    }
+
+    const [negocio, actor] = await this.prisma.$transaction([
+      this.prisma.negocio.findUnique({
+        where: { id: negocioId },
+        select: { id: true, duenoId: true },
+      }),
+      this.prisma.usuario.findUnique({
+        where: { id: actorUserId },
+        select: { id: true, rolGlobal: true },
+      }),
+    ]);
+
+    if (!negocio) throw new NotFoundException('Negocio no encontrado');
+    if (!actor) throw new UnauthorizedException('Usuario no autenticado');
+
+    return (
+      negocio.duenoId === actorUserId ||
+      actor.rolGlobal === RolGlobal.ADMIN ||
+      actor.rolGlobal === RolGlobal.MODERADOR
+    );
+  }
+
   private async canManageNegocio(negocioId: number, actorUserId: number) {
     try {
       await this.assertCanManageNegocio(negocioId, actorUserId);
@@ -122,23 +180,8 @@ export class ReservaService {
     return recurso;
   }
 
-  private getRangosParaFecha(horario: Horario | null, ymd: string) {
-    if (!horario) return null;
-
-    if (horario.exceptions && horario.exceptions[ymd] !== undefined) {
-      return horario.exceptions[ymd];
-    }
-
-    if (horario.weekly && typeof horario.weekly === 'object') {
-      const d = new Date(`${ymd}T00:00:00`);
-      return horario.weekly[dayKey(d)] || [];
-    }
-
-    if (horario.apertura && horario.cierre) {
-      return [[horario.apertura, horario.cierre]];
-    }
-
-    return [];
+  private getRangosParaFecha(horario: HorarioJson | null, ymd: string) {
+    return getRangosParaFecha(horario, ymd);
   }
 
   private async updateReservaRecord(
@@ -176,15 +219,24 @@ export class ReservaService {
     }
 
     const ymd = fecha.toISOString().slice(0, 10);
-    const negocio = await this.prisma.negocio.findUnique({
-      where: { id: negocioId },
+    const negocio = await this.prisma.negocio.findFirst({
+      where: {
+        id: negocioId,
+        activo: true,
+        eliminadoEn: null,
+      },
       select: {
         id: true,
         intervaloReserva: true,
         horario: true,
+        reservasActivas: true,
       },
     });
     if (!negocio) throw new NotFoundException('Negocio no encontrado');
+
+    if (!negocio.reservasActivas) {
+      throw new BadRequestException('El negocio no tiene reservas activas');
+    }
 
     const recurso = await this.ensureRecursoValido(
       negocioId,
@@ -198,7 +250,7 @@ export class ReservaService {
     }
 
     const rangos = this.getRangosParaFecha(
-      negocio.horario as Horario | null,
+      negocio.horario as HorarioJson | null,
       ymd,
     );
     if (rangos === null) {
@@ -249,14 +301,38 @@ export class ReservaService {
     };
   }
 
-  async availability(negocioId: number, ymd: string, recursoId?: number) {
-    const negocio = await this.prisma.negocio.findUnique({
-      where: { id: negocioId },
-      select: { intervaloReserva: true, horario: true },
+  async availabilityDetailed(
+    negocioId: number,
+    ymd: string,
+    recursoId?: number,
+  ): Promise<AvailabilityDetail> {
+    const negocio = await this.prisma.negocio.findFirst({
+      where: {
+        id: negocioId,
+        activo: true,
+        eliminadoEn: null,
+      },
+      select: {
+        intervaloReserva: true,
+        horario: true,
+        reservasActivas: true,
+      },
     });
     if (!negocio) throw new NotFoundException('Negocio no encontrado');
 
     const recurso = await this.ensureRecursoValido(negocioId, recursoId);
+
+    if (!negocio.reservasActivas) {
+      return {
+        fecha: ymd,
+        date: ymd,
+        reservasActivas: false,
+        intervaloReserva: negocio.intervaloReserva ?? null,
+        intervalo: negocio.intervaloReserva ?? null,
+        recursoId: recurso?.id ?? null,
+        slots: [],
+      };
+    }
 
     if (!negocio.intervaloReserva || negocio.intervaloReserva <= 0) {
       throw new BadRequestException(
@@ -265,7 +341,7 @@ export class ReservaService {
     }
 
     const rangos = this.getRangosParaFecha(
-      negocio.horario as Horario | null,
+      negocio.horario as HorarioJson | null,
       ymd,
     );
     if (rangos === null) {
@@ -284,30 +360,34 @@ export class ReservaService {
       select: { fecha: true },
     });
     const ocupadas = new Set(reservas.map((item) => item.fecha.getTime()));
-
-    const now = new Date();
-    const slots: string[] = [];
-
-    for (const [ini, fin] of rangos) {
-      const min0 = toMinutes(ini);
-      const min1 = toMinutes(fin);
-      for (
-        let t = min0;
-        t + negocio.intervaloReserva <= min1;
-        t += negocio.intervaloReserva
-      ) {
-        const slotDate = dateFromYMDAndMinutes(ymd, t);
-        if (slotDate.getTime() <= now.getTime()) continue;
-        if (ocupadas.has(slotDate.getTime())) continue;
-        slots.push(slotDate.toISOString());
-      }
-    }
+    const slots = buildAvailabilitySlots(
+      ymd,
+      negocio.intervaloReserva,
+      rangos,
+      ocupadas,
+    );
 
     return {
+      fecha: ymd,
       date: ymd,
+      reservasActivas: true,
+      intervaloReserva: negocio.intervaloReserva,
       intervalo: negocio.intervaloReserva,
       recursoId: recurso?.id ?? null,
       slots,
+    };
+  }
+
+  async availability(negocioId: number, ymd: string, recursoId?: number) {
+    const detailed = await this.availabilityDetailed(negocioId, ymd, recursoId);
+
+    return {
+      date: detailed.date,
+      intervalo: detailed.intervalo,
+      recursoId: detailed.recursoId,
+      slots: detailed.slots
+        .filter((slot) => slot.disponible)
+        .map((slot) => slot.fecha),
     };
   }
 
@@ -423,6 +503,89 @@ export class ReservaService {
     };
   }
 
+  async resumenPorDia(
+    negocioId: number,
+    actorUserId: number,
+    desde?: string,
+    dias?: number | string,
+  ) {
+    const canEdit = await this.canEditNegocioReservas(negocioId, actorUserId);
+    if (!canEdit) {
+      throw new ForbiddenException('No tienes permisos para ver estas reservas');
+    }
+
+    const today = formatYMD(new Date());
+    const from = parseYMD((desde?.trim() || today), 'desde');
+    const totalDias = Math.max(1, Math.min(60, Number(dias ?? 14) | 0));
+    const to = new Date(from);
+    to.setDate(from.getDate() + totalDias);
+
+    const buckets = new Map<
+      string,
+      {
+        fecha: string;
+        total: number;
+        reservas: Array<{
+          id: number;
+          hora: string;
+          clienteNombre: string;
+          estado: ReservaEstado;
+          nota: string | null;
+        }>;
+      }
+    >();
+
+    for (let offset = 0; offset < totalDias; offset += 1) {
+      const date = new Date(from);
+      date.setDate(from.getDate() + offset);
+      const fecha = formatYMD(date);
+      buckets.set(fecha, { fecha, total: 0, reservas: [] });
+    }
+
+    const reservas = await this.prisma.reserva.findMany({
+      where: {
+        negocioId,
+        fecha: { gte: from, lt: to },
+        estado: { not: ReservaEstado.CANCELADA },
+      },
+      select: {
+        id: true,
+        fecha: true,
+        estado: true,
+        nota: true,
+        usuario: {
+          select: {
+            nombre: true,
+            nickname: true,
+          },
+        },
+      },
+      orderBy: [{ fecha: 'asc' }, { id: 'asc' }],
+    });
+
+    for (const reserva of reservas) {
+      const fecha = formatYMD(reserva.fecha);
+      const bucket = buckets.get(fecha);
+      if (!bucket) {
+        continue;
+      }
+
+      bucket.reservas.push({
+        id: reserva.id,
+        hora: formatHHmm(reserva.fecha),
+        clienteNombre: reserva.usuario.nombre || reserva.usuario.nickname,
+        estado: reserva.estado,
+        nota: reserva.nota,
+      });
+      bucket.total += 1;
+    }
+
+    return {
+      desde: formatYMD(from),
+      dias: Array.from(buckets.values()),
+    };
+  }
+
   async actualizarEstado(
     id: number,
     actorUserId: number,
@@ -440,7 +603,7 @@ export class ReservaService {
     if (!reserva) throw new NotFoundException('Reserva no encontrada');
 
     const canManage =
-      isAdmin || (await this.canManageNegocio(reserva.negocioId, actorUserId));
+      isAdmin || (await this.canEditNegocioReservas(reserva.negocioId, actorUserId));
     const isOwner = reserva.usuarioId === actorUserId;
 
     if (dto.estado === ReservaEstado.CANCELADA && (canManage || isOwner)) {
@@ -486,7 +649,7 @@ export class ReservaService {
     if (!reserva) throw new NotFoundException('Reserva no encontrada');
 
     const canManage =
-      isAdmin || (await this.canManageNegocio(reserva.negocioId, actorUserId));
+      isAdmin || (await this.canEditNegocioReservas(reserva.negocioId, actorUserId));
     const isOwner = reserva.usuarioId === actorUserId;
 
     if (!canManage && !isOwner) {
@@ -565,7 +728,7 @@ export class ReservaService {
     if (!reserva) throw new NotFoundException('Reserva no encontrada');
 
     const canManage =
-      isAdmin || (await this.canManageNegocio(reserva.negocioId, userId));
+      isAdmin || (await this.canEditNegocioReservas(reserva.negocioId, userId));
 
     if (!canManage && reserva.usuarioId !== userId) {
       throw new ForbiddenException('No puedes cancelar esta reserva');
