@@ -270,7 +270,6 @@ async function main() {
     },
   });
 
-
   // ── Categorías y subcategorías adicionales (idempotente) ────────────────────
   console.log('Sembrando categorías y subcategorías ampliadas...');
 
@@ -322,21 +321,27 @@ async function main() {
 
   for (const nombre of SUBS_EXTRA_HOSTELERIA) {
     await prisma.subcategoria.upsert({
-      where: { categoriaId_nombre: { categoriaId: categoriaHosteleria.id, nombre } },
+      where: {
+        categoriaId_nombre: { categoriaId: categoriaHosteleria.id, nombre },
+      },
       create: { nombre, categoriaId: categoriaHosteleria.id },
       update: {},
     });
   }
   for (const nombre of SUBS_EXTRA_COMERCIO) {
     await prisma.subcategoria.upsert({
-      where: { categoriaId_nombre: { categoriaId: categoriaComercio.id, nombre } },
+      where: {
+        categoriaId_nombre: { categoriaId: categoriaComercio.id, nombre },
+      },
       create: { nombre, categoriaId: categoriaComercio.id },
       update: {},
     });
   }
   for (const nombre of SUBS_EXTRA_BELLEZA) {
     await prisma.subcategoria.upsert({
-      where: { categoriaId_nombre: { categoriaId: categoriaBelleza.id, nombre } },
+      where: {
+        categoriaId_nombre: { categoriaId: categoriaBelleza.id, nombre },
+      },
       create: { nombre, categoriaId: categoriaBelleza.id },
       update: {},
     });
@@ -1269,13 +1274,31 @@ async function main() {
 
   type LogroTipoSeed = 'COMPRA' | 'RESENA' | 'PROMOCION' | 'RESERVA' | 'OTRO';
   type DificultadSeed = 'FACIL' | 'MEDIA' | 'DURA' | 'LEGENDARIA';
+  type LogroCategoriaSeed =
+    | 'GENERAL'
+    | 'EXPLORACION'
+    | 'RESENAS'
+    | 'COMPRAS'
+    | 'RESERVAS'
+    | 'PROMOCIONES'
+    | 'NEGOCIO'
+    | 'SOCIAL'
+    | 'ESPECIAL';
   type AccionLogro =
     | 'RESENA_PUBLICADA'
     | 'COMPRA_REALIZADA'
     | 'RESERVA_HECHA'
     | 'PROMOCION_CANJEADA'
     | 'VISITA_NEGOCIO'
-    | 'NEGOCIO_SEGUIDO';
+    | 'NEGOCIO_SEGUIDO'
+    | 'VISITA_TODAS_CATEGORIAS'
+    | 'VISITA_TODAS_SUBCATEGORIAS'
+    | 'RESENAS_DIFERENTES_PUNTUACIONES'
+    | 'RESENAS_5_ESTRELLAS'
+    | 'PERFIL_COMPLETADO'
+    | 'HORARIO_NEGOCIO_CONFIGURADO'
+    | 'HITO_NEGOCIO'
+    | 'TODOS_LOGROS_COMPLETADOS';
 
   interface LogroLevel {
     titulo: string;
@@ -1301,10 +1324,34 @@ async function main() {
       accion: 'RESENA_PUBLICADA',
       accionLabel: 'reseñas publicadas',
       niveles: [
-        { titulo: 'Primera reseña',         descripcion: 'Publica tu primera reseña en Nenúfar.',        umbral: 1,   dificultad: 'FACIL',      recompensaPuntos: 25 },
-        { titulo: 'Crítico en formación',   descripcion: 'Publica 5 reseñas en negocios locales.',       umbral: 5,   dificultad: 'MEDIA',      recompensaPuntos: 100 },
-        { titulo: 'Voz del barrio',         descripcion: 'Acumula 20 reseñas publicadas.',                umbral: 20,  dificultad: 'DURA',       recompensaPuntos: 350 },
-        { titulo: 'Pluma legendaria',       descripcion: 'Llega a 100 reseñas publicadas. Una leyenda.',  umbral: 100, dificultad: 'LEGENDARIA', recompensaPuntos: 1500 },
+        {
+          titulo: 'Primera reseña',
+          descripcion: 'Publica tu primera reseña en Nenúfar.',
+          umbral: 1,
+          dificultad: 'FACIL',
+          recompensaPuntos: 25,
+        },
+        {
+          titulo: 'Crítico en formación',
+          descripcion: 'Publica 5 reseñas en negocios locales.',
+          umbral: 5,
+          dificultad: 'MEDIA',
+          recompensaPuntos: 100,
+        },
+        {
+          titulo: 'Voz del barrio',
+          descripcion: 'Acumula 20 reseñas publicadas.',
+          umbral: 20,
+          dificultad: 'DURA',
+          recompensaPuntos: 350,
+        },
+        {
+          titulo: 'Pluma legendaria',
+          descripcion: 'Llega a 100 reseñas publicadas. Una leyenda.',
+          umbral: 100,
+          dificultad: 'LEGENDARIA',
+          recompensaPuntos: 1500,
+        },
       ],
     },
     {
@@ -1312,10 +1359,34 @@ async function main() {
       accion: 'COMPRA_REALIZADA',
       accionLabel: 'compras realizadas',
       niveles: [
-        { titulo: 'Primera compra',         descripcion: 'Realiza tu primera compra a través de Nenúfar.', umbral: 1,   dificultad: 'FACIL',      recompensaPuntos: 25 },
-        { titulo: 'Comprador habitual',     descripcion: 'Realiza 5 compras en negocios locales.',          umbral: 5,   dificultad: 'MEDIA',      recompensaPuntos: 100 },
-        { titulo: 'Cliente fiel',           descripcion: 'Realiza 20 compras. Eres parte del barrio.',      umbral: 20,  dificultad: 'DURA',       recompensaPuntos: 400 },
-        { titulo: 'Leyenda del comercio',   descripcion: 'Realiza 100 compras locales.',                    umbral: 100, dificultad: 'LEGENDARIA', recompensaPuntos: 1800 },
+        {
+          titulo: 'Primera compra',
+          descripcion: 'Realiza tu primera compra a través de Nenúfar.',
+          umbral: 1,
+          dificultad: 'FACIL',
+          recompensaPuntos: 25,
+        },
+        {
+          titulo: 'Comprador habitual',
+          descripcion: 'Realiza 5 compras en negocios locales.',
+          umbral: 5,
+          dificultad: 'MEDIA',
+          recompensaPuntos: 100,
+        },
+        {
+          titulo: 'Cliente fiel',
+          descripcion: 'Realiza 20 compras. Eres parte del barrio.',
+          umbral: 20,
+          dificultad: 'DURA',
+          recompensaPuntos: 400,
+        },
+        {
+          titulo: 'Leyenda del comercio',
+          descripcion: 'Realiza 100 compras locales.',
+          umbral: 100,
+          dificultad: 'LEGENDARIA',
+          recompensaPuntos: 1800,
+        },
       ],
     },
     {
@@ -1323,10 +1394,34 @@ async function main() {
       accion: 'RESERVA_HECHA',
       accionLabel: 'reservas hechas',
       niveles: [
-        { titulo: 'Mesa reservada',         descripcion: 'Haz tu primera reserva.',                          umbral: 1,   dificultad: 'FACIL',      recompensaPuntos: 25 },
-        { titulo: 'Planificador',           descripcion: 'Acumula 5 reservas en negocios locales.',          umbral: 5,   dificultad: 'MEDIA',      recompensaPuntos: 100 },
-        { titulo: 'Anfitrión recurrente',   descripcion: 'Acumula 20 reservas confirmadas.',                 umbral: 20,  dificultad: 'DURA',       recompensaPuntos: 350 },
-        { titulo: 'Maître legendario',      descripcion: 'Llega a 100 reservas. La agenda es tuya.',         umbral: 100, dificultad: 'LEGENDARIA', recompensaPuntos: 1500 },
+        {
+          titulo: 'Mesa reservada',
+          descripcion: 'Haz tu primera reserva.',
+          umbral: 1,
+          dificultad: 'FACIL',
+          recompensaPuntos: 25,
+        },
+        {
+          titulo: 'Planificador',
+          descripcion: 'Acumula 5 reservas en negocios locales.',
+          umbral: 5,
+          dificultad: 'MEDIA',
+          recompensaPuntos: 100,
+        },
+        {
+          titulo: 'Anfitrión recurrente',
+          descripcion: 'Acumula 20 reservas confirmadas.',
+          umbral: 20,
+          dificultad: 'DURA',
+          recompensaPuntos: 350,
+        },
+        {
+          titulo: 'Maître legendario',
+          descripcion: 'Llega a 100 reservas. La agenda es tuya.',
+          umbral: 100,
+          dificultad: 'LEGENDARIA',
+          recompensaPuntos: 1500,
+        },
       ],
     },
     {
@@ -1334,10 +1429,34 @@ async function main() {
       accion: 'PROMOCION_CANJEADA',
       accionLabel: 'promociones canjeadas',
       niveles: [
-        { titulo: 'Primer descuento',       descripcion: 'Canjea tu primera promoción.',                     umbral: 1,   dificultad: 'FACIL',      recompensaPuntos: 20 },
-        { titulo: 'Cazador de ofertas',     descripcion: 'Canjea 5 promociones distintas.',                  umbral: 5,   dificultad: 'MEDIA',      recompensaPuntos: 80 },
-        { titulo: 'Maestro del ahorro',     descripcion: 'Canjea 20 promociones.',                            umbral: 20,  dificultad: 'DURA',       recompensaPuntos: 300 },
-        { titulo: 'Rey de las promociones', descripcion: 'Canjea 100 promociones. Ahorrar es un arte.',       umbral: 100, dificultad: 'LEGENDARIA', recompensaPuntos: 1300 },
+        {
+          titulo: 'Primer descuento',
+          descripcion: 'Canjea tu primera promoción.',
+          umbral: 1,
+          dificultad: 'FACIL',
+          recompensaPuntos: 20,
+        },
+        {
+          titulo: 'Cazador de ofertas',
+          descripcion: 'Canjea 5 promociones distintas.',
+          umbral: 5,
+          dificultad: 'MEDIA',
+          recompensaPuntos: 80,
+        },
+        {
+          titulo: 'Maestro del ahorro',
+          descripcion: 'Canjea 20 promociones.',
+          umbral: 20,
+          dificultad: 'DURA',
+          recompensaPuntos: 300,
+        },
+        {
+          titulo: 'Rey de las promociones',
+          descripcion: 'Canjea 100 promociones. Ahorrar es un arte.',
+          umbral: 100,
+          dificultad: 'LEGENDARIA',
+          recompensaPuntos: 1300,
+        },
       ],
     },
     {
@@ -1345,10 +1464,34 @@ async function main() {
       accion: 'VISITA_NEGOCIO',
       accionLabel: 'visitas a negocios',
       niveles: [
-        { titulo: 'Primera visita',         descripcion: 'Visita tu primer negocio en Nenúfar.',             umbral: 1,   dificultad: 'FACIL',      recompensaPuntos: 10 },
-        { titulo: 'Explorador del barrio',  descripcion: 'Visita 5 negocios diferentes.',                    umbral: 5,   dificultad: 'MEDIA',      recompensaPuntos: 50 },
-        { titulo: 'Cartógrafo local',       descripcion: 'Visita 20 negocios distintos.',                    umbral: 20,  dificultad: 'DURA',       recompensaPuntos: 250 },
-        { titulo: 'Pasaporte completo',     descripcion: 'Visita 100 negocios distintos.',                    umbral: 100, dificultad: 'LEGENDARIA', recompensaPuntos: 1200 },
+        {
+          titulo: 'Primera visita',
+          descripcion: 'Visita tu primer negocio en Nenúfar.',
+          umbral: 1,
+          dificultad: 'FACIL',
+          recompensaPuntos: 10,
+        },
+        {
+          titulo: 'Explorador del barrio',
+          descripcion: 'Visita 5 negocios diferentes.',
+          umbral: 5,
+          dificultad: 'MEDIA',
+          recompensaPuntos: 50,
+        },
+        {
+          titulo: 'Cartógrafo local',
+          descripcion: 'Visita 20 negocios distintos.',
+          umbral: 20,
+          dificultad: 'DURA',
+          recompensaPuntos: 250,
+        },
+        {
+          titulo: 'Pasaporte completo',
+          descripcion: 'Visita 100 negocios distintos.',
+          umbral: 100,
+          dificultad: 'LEGENDARIA',
+          recompensaPuntos: 1200,
+        },
       ],
     },
     {
@@ -1356,15 +1499,41 @@ async function main() {
       accion: 'NEGOCIO_SEGUIDO',
       accionLabel: 'negocios seguidos',
       niveles: [
-        { titulo: 'Primer seguidor',        descripcion: 'Sigue a tu primer negocio.',                        umbral: 1,   dificultad: 'FACIL',      recompensaPuntos: 10 },
-        { titulo: 'Coleccionista',          descripcion: 'Sigue a 5 negocios.',                                umbral: 5,   dificultad: 'MEDIA',      recompensaPuntos: 50 },
-        { titulo: 'Embajador local',        descripcion: 'Sigue a 20 negocios. Eres parte del ecosistema.',    umbral: 20,  dificultad: 'DURA',       recompensaPuntos: 250 },
-        { titulo: 'Agente del barrio',      descripcion: 'Sigue a 100 negocios. Imparable.',                   umbral: 100, dificultad: 'LEGENDARIA', recompensaPuntos: 1200 },
+        {
+          titulo: 'Primer seguidor',
+          descripcion: 'Sigue a tu primer negocio.',
+          umbral: 1,
+          dificultad: 'FACIL',
+          recompensaPuntos: 10,
+        },
+        {
+          titulo: 'Coleccionista',
+          descripcion: 'Sigue a 5 negocios.',
+          umbral: 5,
+          dificultad: 'MEDIA',
+          recompensaPuntos: 50,
+        },
+        {
+          titulo: 'Embajador local',
+          descripcion: 'Sigue a 20 negocios. Eres parte del ecosistema.',
+          umbral: 20,
+          dificultad: 'DURA',
+          recompensaPuntos: 250,
+        },
+        {
+          titulo: 'Agente del barrio',
+          descripcion: 'Sigue a 100 negocios. Imparable.',
+          umbral: 100,
+          dificultad: 'LEGENDARIA',
+          recompensaPuntos: 1200,
+        },
       ],
     },
   ];
 
-  const logrosLadderCreados: Array<Awaited<ReturnType<typeof prisma.logro.create>>> = [];
+  const logrosLadderCreados: Array<
+    Awaited<ReturnType<typeof prisma.logro.create>>
+  > = [];
   for (const ladder of LOGRO_LADDERS) {
     for (const nivel of ladder.niveles) {
       // Buscar primero (no hay unique constraint sobre titulo/tipo/umbral)
@@ -1401,6 +1570,137 @@ async function main() {
     }
   }
   console.log(`Sembrados ${logrosLadderCreados.length} logros progresivos.`);
+
+  console.log('Sembrando logros ocultos...');
+
+  const LOGROS_OCULTOS: Array<{
+    titulo: string;
+    descripcion: string;
+    tipo: LogroTipoSeed;
+    accion: AccionLogro;
+    umbral: number;
+    dificultad: DificultadSeed;
+    recompensaPuntos: number;
+    categoriaLogro: LogroCategoriaSeed;
+    esFinal?: boolean;
+  }> = [
+    {
+      titulo: 'Mapa completo',
+      descripcion: 'Visita al menos un negocio de cada categoría activa.',
+      tipo: 'OTRO',
+      accion: 'VISITA_TODAS_CATEGORIAS',
+      umbral: 1,
+      dificultad: 'DURA',
+      recompensaPuntos: 500,
+      categoriaLogro: 'EXPLORACION',
+    },
+    {
+      titulo: 'Brújula minuciosa',
+      descripcion: 'Visita al menos un negocio de cada subcategoría activa.',
+      tipo: 'OTRO',
+      accion: 'VISITA_TODAS_SUBCATEGORIAS',
+      umbral: 1,
+      dificultad: 'LEGENDARIA',
+      recompensaPuntos: 1200,
+      categoriaLogro: 'EXPLORACION',
+    },
+    {
+      titulo: 'Crítico equilibrado',
+      descripcion: 'Publica reseñas con todas las puntuaciones posibles.',
+      tipo: 'RESENA',
+      accion: 'RESENAS_DIFERENTES_PUNTUACIONES',
+      umbral: 5,
+      dificultad: 'MEDIA',
+      recompensaPuntos: 180,
+      categoriaLogro: 'RESENAS',
+    },
+    {
+      titulo: 'Cinco estrellas en serie',
+      descripcion: 'Publica 10 reseñas de 5 estrellas.',
+      tipo: 'RESENA',
+      accion: 'RESENAS_5_ESTRELLAS',
+      umbral: 10,
+      dificultad: 'DURA',
+      recompensaPuntos: 400,
+      categoriaLogro: 'RESENAS',
+    },
+    {
+      titulo: 'Identidad florecida',
+      descripcion: 'Completa la configuración básica de tu perfil.',
+      tipo: 'OTRO',
+      accion: 'PERFIL_COMPLETADO',
+      umbral: 1,
+      dificultad: 'FACIL',
+      recompensaPuntos: 60,
+      categoriaLogro: 'GENERAL',
+    },
+    {
+      titulo: 'Puertas abiertas',
+      descripcion: 'Configura el horario de un negocio.',
+      tipo: 'OTRO',
+      accion: 'HORARIO_NEGOCIO_CONFIGURADO',
+      umbral: 1,
+      dificultad: 'FACIL',
+      recompensaPuntos: 80,
+      categoriaLogro: 'NEGOCIO',
+    },
+    {
+      titulo: 'Primer brote del negocio',
+      descripcion: 'Consigue el primer hito relevante de un negocio.',
+      tipo: 'OTRO',
+      accion: 'HITO_NEGOCIO',
+      umbral: 1,
+      dificultad: 'MEDIA',
+      recompensaPuntos: 150,
+      categoriaLogro: 'NEGOCIO',
+    },
+    {
+      titulo: 'Nenúfar del topo',
+      descripcion: 'Desbloquea todos los demás logros de Nenúfar.',
+      tipo: 'OTRO',
+      accion: 'TODOS_LOGROS_COMPLETADOS',
+      umbral: 1,
+      dificultad: 'LEGENDARIA',
+      recompensaPuntos: 2500,
+      categoriaLogro: 'ESPECIAL',
+      esFinal: true,
+    },
+  ];
+
+  for (const logro of LOGROS_OCULTOS) {
+    const existente = await prisma.logro.findFirst({
+      where: {
+        titulo: logro.titulo,
+        accion: logro.accion,
+      },
+    });
+
+    const data = {
+      descripcion: logro.descripcion,
+      tipo: logro.tipo,
+      accion: logro.accion,
+      dificultad: logro.dificultad,
+      umbral: logro.umbral,
+      recompensaPuntos: logro.recompensaPuntos,
+      categoriaLogro: logro.categoriaLogro,
+      oculto: true,
+      esFinal: logro.esFinal ?? false,
+    };
+
+    if (existente) {
+      await prisma.logro.update({
+        where: { id: existente.id },
+        data,
+      });
+    } else {
+      await prisma.logro.create({
+        data: {
+          titulo: logro.titulo,
+          ...data,
+        },
+      });
+    }
+  }
 
   const logros = [logroPrimeraResena, logroExplorador, logroReserva, logroCafe];
 

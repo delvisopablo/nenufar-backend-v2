@@ -114,7 +114,9 @@ export class ReservaService {
       return negocio;
     }
 
-    throw new ForbiddenException('No tienes permisos para gestionar este negocio');
+    throw new ForbiddenException(
+      'No tienes permisos para gestionar este negocio',
+    );
   }
 
   private async canEditNegocioReservas(negocioId: number, actorUserId: number) {
@@ -227,6 +229,7 @@ export class ReservaService {
       },
       select: {
         id: true,
+        duenoId: true,
         intervaloReserva: true,
         horario: true,
         reservasActivas: true,
@@ -298,6 +301,7 @@ export class ReservaService {
     return {
       fecha,
       recursoId: recurso?.id ?? null,
+      duenoId: negocio.duenoId,
     };
   }
 
@@ -427,6 +431,14 @@ export class ReservaService {
         })
         .catch(() => undefined);
 
+      void this.logroEngine
+        .registrarAccion({
+          usuarioId: slot.duenoId,
+          accion: 'HITO_NEGOCIO',
+          refId: negocioId,
+        })
+        .catch(() => undefined);
+
       return this.getById(reserva.id);
     } catch (error) {
       if (
@@ -468,7 +480,7 @@ export class ReservaService {
       ...(query.estado ? { estado: query.estado } : {}),
       ...(query.recursoId ? { recursoId: query.recursoId } : {}),
       ...(query.usuarioId ? { usuarioId: query.usuarioId } : {}),
-      ...((query.from || query.to)
+      ...(query.from || query.to
         ? {
             fecha: {
               ...(query.from ? { gte: new Date(query.from) } : {}),
@@ -511,11 +523,13 @@ export class ReservaService {
   ) {
     const canEdit = await this.canEditNegocioReservas(negocioId, actorUserId);
     if (!canEdit) {
-      throw new ForbiddenException('No tienes permisos para ver estas reservas');
+      throw new ForbiddenException(
+        'No tienes permisos para ver estas reservas',
+      );
     }
 
     const today = formatYMD(new Date());
-    const from = parseYMD((desde?.trim() || today), 'desde');
+    const from = parseYMD(desde?.trim() || today, 'desde');
     const totalDias = Math.max(1, Math.min(60, Number(dias ?? 14) | 0));
     const to = new Date(from);
     to.setDate(from.getDate() + totalDias);
@@ -603,7 +617,8 @@ export class ReservaService {
     if (!reserva) throw new NotFoundException('Reserva no encontrada');
 
     const canManage =
-      isAdmin || (await this.canEditNegocioReservas(reserva.negocioId, actorUserId));
+      isAdmin ||
+      (await this.canEditNegocioReservas(reserva.negocioId, actorUserId));
     const isOwner = reserva.usuarioId === actorUserId;
 
     if (dto.estado === ReservaEstado.CANCELADA && (canManage || isOwner)) {
@@ -611,7 +626,9 @@ export class ReservaService {
     }
 
     if (!canManage) {
-      throw new ForbiddenException('Solo el negocio puede actualizar este estado');
+      throw new ForbiddenException(
+        'Solo el negocio puede actualizar este estado',
+      );
     }
 
     const allowedStates: ReservaEstado[] = [
@@ -649,7 +666,8 @@ export class ReservaService {
     if (!reserva) throw new NotFoundException('Reserva no encontrada');
 
     const canManage =
-      isAdmin || (await this.canEditNegocioReservas(reserva.negocioId, actorUserId));
+      isAdmin ||
+      (await this.canEditNegocioReservas(reserva.negocioId, actorUserId));
     const isOwner = reserva.usuarioId === actorUserId;
 
     if (!canManage && !isOwner) {
@@ -686,7 +704,9 @@ export class ReservaService {
 
     if (dto.estado !== undefined) {
       if (!canManage) {
-        throw new ForbiddenException('Solo el negocio puede cambiar ese estado');
+        throw new ForbiddenException(
+          'Solo el negocio puede cambiar ese estado',
+        );
       }
 
       const allowedStates: ReservaEstado[] = [

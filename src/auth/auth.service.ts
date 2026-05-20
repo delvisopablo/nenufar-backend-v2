@@ -63,6 +63,9 @@ const authUserSelect = {
       nombre: true,
       slug: true,
       duenoId: true,
+      descripcionCorta: true,
+      historia: true,
+      direccion: true,
       horario: true,
       intervaloReserva: true,
       reservasActivas: true,
@@ -70,6 +73,8 @@ const authUserSelect = {
       nenufarActivo: true,
       nenufarKey: true,
       nenufarAsset: true,
+      categoria: { select: { id: true, nombre: true } },
+      subcategoria: { select: { id: true, nombre: true } },
       _count: {
         select: {
           seguidores: true,
@@ -112,9 +117,14 @@ const loginUserSelect = {
       nombre: true,
       slug: true,
       duenoId: true,
+      descripcionCorta: true,
+      historia: true,
+      direccion: true,
       horario: true,
       intervaloReserva: true,
       reservasActivas: true,
+      categoria: { select: { id: true, nombre: true } },
+      subcategoria: { select: { id: true, nombre: true } },
       nenufarActivo: true,
       nenufarKey: true,
       nenufarAsset: true,
@@ -505,7 +515,7 @@ export class AuthService {
   }
 
   private logSessionCookies(
-    action: 'login' | 'refresh',
+    action: 'login' | 'refresh' | 'registro' | 'registro-negocio',
     tokens: Awaited<ReturnType<AuthService['signTokens']>>,
   ) {
     const cookieOptions = this.getCookieBaseOptions();
@@ -572,7 +582,7 @@ export class AuthService {
   private setSessionCookies(
     res: Response,
     tokens: Awaited<ReturnType<AuthService['signTokens']>>,
-    action?: 'login' | 'refresh',
+    action?: 'login' | 'refresh' | 'registro' | 'registro-negocio',
   ) {
     res.cookie(
       'access_token',
@@ -789,7 +799,8 @@ export class AuthService {
         rolGlobal: user.rolGlobal,
       });
 
-      this.setSessionCookies(res, tokens);
+      this.setSessionCookies(res, tokens, 'registro');
+      this.logger.log(`[registro] usuario creado id=${user.id}`);
 
       const verificationToken = await this.signOneTimeToken('verify-email', {
         id: user.id,
@@ -797,10 +808,13 @@ export class AuthService {
         nickname: user.nickname,
       });
 
+      const publicUser =
+        (await this.getPublicAuthUserById(user.id)) ??
+        this.toBasicAuthUser(user);
+
       return {
-        usuario:
-          (await this.getPublicAuthUserById(user.id)) ??
-          this.toBasicAuthUser(user),
+        access_token: tokens.access,
+        usuario: publicUser,
         verificationToken,
       };
     } catch (error) {
@@ -1025,7 +1039,10 @@ export class AuthService {
         rolGlobal: result.user.rolGlobal,
       });
 
-      this.setSessionCookies(res, tokens);
+      this.setSessionCookies(res, tokens, 'registro-negocio');
+      this.logger.log(
+        `[registro-negocio] usuario id=${result.user.id} negocio id=${result.negocio.id}`,
+      );
 
       return {
         access_token: tokens.access,

@@ -1,11 +1,13 @@
 import { Injectable, Optional } from '@nestjs/common';
 import {
+  ContenidoEstado,
   MotivoTx,
   Prisma,
   ReservaEstado,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificacionService } from '../notificacion/notificacion.service';
+import { hasOpenDays, HorarioJson } from '../negocio/horario.util';
 import { AccionLogro } from './logro-accion';
 
 type RegistrarAccionOpts = {
@@ -25,17 +27,31 @@ export class LogroEngineService {
   async registrarAccion(
     opts: RegistrarAccionOpts,
   ): Promise<{ desbloqueados: number[] }> {
+    const desbloqueados = await this.desbloquearLogrosParaAccion(opts);
+
+    if (opts.accion !== 'TODOS_LOGROS_COMPLETADOS') {
+      const final = await this.desbloquearLogrosParaAccion({
+        usuarioId: opts.usuarioId,
+        accion: 'TODOS_LOGROS_COMPLETADOS',
+        refId: opts.refId,
+      });
+      desbloqueados.push(...final);
+    }
+
+    return { desbloqueados };
+  }
+
+  private async desbloquearLogrosParaAccion(
+    opts: RegistrarAccionOpts,
+  ): Promise<number[]> {
     const contador = await this.getContadorAccion(opts.usuarioId, opts.accion);
     if (contador <= 0) {
-      return { desbloqueados: [] };
+      return [];
     }
 
     const logros = await this.prisma.logro.findMany({
       where: {
         accion: opts.accion,
-        umbral: {
-          lte: contador,
-        },
       },
       orderBy: {
         umbral: 'asc',
@@ -43,12 +59,18 @@ export class LogroEngineService {
     });
 
     if (logros.length === 0) {
-      return { desbloqueados: [] };
+      return [];
     }
 
     const desbloqueados: number[] = [];
 
     for (const logro of logros) {
+      const objetivo = await this.getObjetivoLogro(logro.accion, logro.umbral);
+      if (objetivo <= 0) {
+        continue;
+      }
+
+      const progreso = Math.min(contador, objetivo);
       const yaTiene = await this.prisma.logroUsuario.findUnique({
         where: {
           logroId_usuarioId: {
@@ -56,26 +78,76 @@ export class LogroEngineService {
             usuarioId: opts.usuarioId,
           },
         },
-        select: { id: true },
+        select: { id: true, conseguido: true, conseguidoEn: true },
       });
 
-      if (yaTiene) {
+      if (contador < objetivo) {
+        if (yaTiene && !yaTiene.conseguido) {
+          await this.prisma.logroUsuario.update({
+            where: { id: yaTiene.id },
+            data: { progreso },
+          });
+        } else if (!yaTiene) {
+          try {
+            await this.prisma.logroUsuario.create({
+              data: {
+                logroId: logro.id,
+                usuarioId: opts.usuarioId,
+                progreso,
+                veces: 0,
+                conseguido: false,
+              },
+            });
+          } catch (error) {
+            if (
+              error instanceof Prisma.PrismaClientKnownRequestError &&
+              error.code === 'P2002'
+            ) {
+              continue;
+            }
+            throw error;
+          }
+        }
+        continue;
+      }
+
+      if (yaTiene?.conseguido) {
         continue;
       }
 
       const conseguidoEn = new Date();
 
       try {
-        await this.prisma.$transaction(async (tx) => {
-          await tx.logroUsuario.create({
-            data: {
-              logroId: logro.id,
-              usuarioId: opts.usuarioId,
-              veces: 1,
-              conseguido: true,
-              conseguidoEn,
-            },
-          });
+        const desbloqueado = await this.prisma.$transaction(async (tx) => {
+          if (yaTiene) {
+            const updated = await tx.logroUsuario.updateMany({
+              where: {
+                id: yaTiene.id,
+                conseguido: false,
+              },
+              data: {
+                progreso,
+                veces: { increment: 1 },
+                conseguido: true,
+                conseguidoEn,
+              },
+            });
+
+            if (updated.count === 0) {
+              return false;
+            }
+          } else {
+            await tx.logroUsuario.create({
+              data: {
+                logroId: logro.id,
+                usuarioId: opts.usuarioId,
+                progreso,
+                veces: 1,
+                conseguido: true,
+                conseguidoEn,
+              },
+            });
+          }
 
           const usuario = await tx.usuario.update({
             where: { id: opts.usuarioId },
@@ -105,7 +177,13 @@ export class LogroEngineService {
                   },
             },
           });
+
+          return true;
         });
+
+        if (!desbloqueado) {
+          continue;
+        }
 
         desbloqueados.push(logro.id);
       } catch (error) {
@@ -131,7 +209,7 @@ export class LogroEngineService {
       }
     }
 
-    return { desbloqueados };
+    return desbloqueados;
   }
 
   async getContadorAccion(usuarioId: number, accion: AccionLogro) {
@@ -192,6 +270,173 @@ export class LogroEngineService {
         return this.prisma.negocioSeguimiento.count({
           where: { usuarioId },
         });
+
+      case 'VISITA_TODAS_CATEGORIAS': {
+        const visitas = await this.prisma.visitaNegocio.findMany({
+          where: { usuarioId },
+          select: {
+            negocio: {
+              select: { categoriaId: true },
+            },
+          },
+        });
+        return new Set(visitas.map((visita) => visita.negocio.categoriaId))
+          .size;
+      }
+
+      case 'VISITA_TODAS_SUBCATEGORIAS': {
+        const visitas = await this.prisma.visitaNegocio.findMany({
+          where: { usuarioId },
+          select: {
+            negocio: {
+              select: { subcategoriaId: true },
+            },
+          },
+        });
+        return new Set(
+          visitas
+            .map((visita) => visita.negocio.subcategoriaId)
+            .filter((id): id is number => typeof id === 'number'),
+        ).size;
+      }
+
+      case 'RESENAS_DIFERENTES_PUNTUACIONES': {
+        const resenas = await this.prisma.resena.findMany({
+          where: {
+            usuarioId,
+            eliminadoEn: null,
+            estado: ContenidoEstado.PUBLICADO,
+          },
+          select: { puntuacion: true },
+          distinct: ['puntuacion'],
+        });
+        return resenas.length;
+      }
+
+      case 'RESENAS_5_ESTRELLAS':
+        return this.prisma.resena.count({
+          where: {
+            usuarioId,
+            puntuacion: 5,
+            eliminadoEn: null,
+            estado: ContenidoEstado.PUBLICADO,
+          },
+        });
+
+      case 'PERFIL_COMPLETADO': {
+        const usuario = await this.prisma.usuario.findUnique({
+          where: { id: usuarioId },
+          select: {
+            nombre: true,
+            nickname: true,
+            email: true,
+            biografia: true,
+            foto: true,
+          },
+        });
+        return usuario &&
+          usuario.nombre?.trim() &&
+          usuario.nickname?.trim() &&
+          usuario.email?.trim() &&
+          usuario.biografia?.trim() &&
+          usuario.foto?.trim()
+          ? 1
+          : 0;
+      }
+
+      case 'HORARIO_NEGOCIO_CONFIGURADO': {
+        const negocios = await this.prisma.negocio.findMany({
+          where: {
+            duenoId: usuarioId,
+            activo: true,
+            eliminadoEn: null,
+          },
+          select: { horario: true },
+        });
+        return negocios.filter((negocio) =>
+          hasOpenDays(negocio.horario as HorarioJson | null),
+        ).length;
+      }
+
+      case 'HITO_NEGOCIO': {
+        const negocios = await this.prisma.negocio.findMany({
+          where: {
+            duenoId: usuarioId,
+            activo: true,
+            eliminadoEn: null,
+          },
+          select: {
+            _count: {
+              select: {
+                seguidores: true,
+                resenas: true,
+                reservas: true,
+                productos: true,
+              },
+            },
+          },
+        });
+        return negocios.filter(
+          (negocio) =>
+            negocio._count.seguidores > 0 ||
+            negocio._count.resenas > 0 ||
+            negocio._count.reservas > 0 ||
+            negocio._count.productos > 0,
+        ).length;
+      }
+
+      case 'TODOS_LOGROS_COMPLETADOS':
+        return this.prisma.logroUsuario.count({
+          where: {
+            usuarioId,
+            conseguido: true,
+            logro: {
+              esFinal: false,
+            },
+          },
+        });
+    }
+  }
+
+  async getObjetivoLogro(accion: string | null, umbral: number) {
+    switch (accion) {
+      case 'VISITA_TODAS_CATEGORIAS':
+        return this.prisma.categoria.count({
+          where: {
+            activo: true,
+            eliminadoEn: null,
+            negocios: {
+              some: {
+                activo: true,
+                eliminadoEn: null,
+              },
+            },
+          },
+        });
+
+      case 'VISITA_TODAS_SUBCATEGORIAS':
+        return this.prisma.subcategoria.count({
+          where: {
+            activo: true,
+            eliminadoEn: null,
+            negocios: {
+              some: {
+                activo: true,
+                eliminadoEn: null,
+              },
+            },
+          },
+        });
+
+      case 'TODOS_LOGROS_COMPLETADOS':
+        return this.prisma.logro.count({
+          where: {
+            esFinal: false,
+          },
+        });
+
+      default:
+        return umbral;
     }
   }
 
@@ -217,7 +462,9 @@ export class LogroEngineService {
       },
     });
 
-    const acciones = [...new Set(logros.map((logro) => logro.accion).filter(Boolean))];
+    const acciones = [
+      ...new Set(logros.map((logro) => logro.accion).filter(Boolean)),
+    ];
     const contadores = new Map<AccionLogro, number>();
 
     for (const accion of acciones) {
@@ -228,46 +475,73 @@ export class LogroEngineService {
       );
     }
 
-    return logros.reduce<
-      Array<{
-        accion: string;
-        contador: number;
-        niveles: Array<{
-          id: number;
-          titulo: string;
-          umbral: number;
-          recompensaPuntos: number;
-          desbloqueado: boolean;
-          conseguidoEn?: Date | null;
-        }>;
-      }>
-    >((acc, logro) => {
+    const grupos: Array<{
+      accion: string;
+      contador: number;
+      niveles: Array<{
+        id: number;
+        titulo: string;
+        descripcion: string | null;
+        categoriaLogro: string;
+        oculto: boolean;
+        esFinal: boolean;
+        umbral: number;
+        progresoActual: number;
+        progresoObjetivo: number;
+        progresoPorcentaje: number;
+        recompensaPuntos: number;
+        recompensaPetalos: number;
+        desbloqueado: boolean;
+        conseguidoEn?: Date | null;
+      }>;
+    }> = [];
+
+    for (const logro of logros) {
       const accion = logro.accion;
       if (!accion) {
-        return acc;
+        continue;
       }
 
-      const existing = acc.at(-1);
+      const existing = grupos.at(-1);
       const desbloqueo = logro.logrosUsuario[0];
+      const contador = contadores.get(accion as AccionLogro) ?? 0;
+      const objetivo = await this.getObjetivoLogro(accion, logro.umbral);
+      const progresoActual = desbloqueo?.conseguidoEn
+        ? objetivo
+        : Math.min(contador, objetivo);
+      const progresoPorcentaje =
+        objetivo > 0
+          ? Math.min(100, Math.floor((progresoActual / objetivo) * 100))
+          : 0;
+      const desbloqueado = Boolean(desbloqueo);
+      const ocultoBloqueado = logro.oculto && !desbloqueado;
 
       if (!existing || existing.accion !== accion) {
-        acc.push({
+        grupos.push({
           accion,
-          contador: contadores.get(accion as AccionLogro) ?? 0,
+          contador,
           niveles: [],
         });
       }
 
-      acc[acc.length - 1].niveles.push({
+      grupos[grupos.length - 1].niveles.push({
         id: logro.id,
-        titulo: logro.titulo,
-        umbral: logro.umbral,
+        titulo: ocultoBloqueado ? 'Logro oculto' : logro.titulo,
+        descripcion: ocultoBloqueado ? null : logro.descripcion,
+        categoriaLogro: logro.categoriaLogro,
+        oculto: logro.oculto,
+        esFinal: logro.esFinal,
+        umbral: objetivo,
+        progresoActual,
+        progresoObjetivo: objetivo,
+        progresoPorcentaje,
         recompensaPuntos: logro.recompensaPuntos,
-        desbloqueado: Boolean(desbloqueo),
+        recompensaPetalos: logro.recompensaPuntos,
+        desbloqueado,
         conseguidoEn: desbloqueo?.conseguidoEn,
       });
+    }
 
-      return acc;
-    }, []);
+    return grupos;
   }
 }

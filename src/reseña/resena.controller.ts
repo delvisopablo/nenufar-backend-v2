@@ -5,10 +5,12 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   Req,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -30,14 +32,19 @@ export class ResenaController {
 
   /** Todas las reseñas (global) */
   @Get()
-  todas() {
-    return this.resenaService.todasLasResenas();
+  @Header('Cache-Control', 'public, max-age=30, stale-while-revalidate=120')
+  todas(@Query('limit') limit?: number) {
+    return this.resenaService.todasLasResenas(limit);
   }
 
   /** Reseñas de un negocio */
   @Get('negocio/:id')
-  porNegocio(@Param('id', ParseIntPipe) id: number) {
-    return this.resenaService.getResenasPorNegocio(id);
+  @Header('Cache-Control', 'public, max-age=30, stale-while-revalidate=120')
+  porNegocio(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.resenaService.getResenasPorNegocio(id, limit);
   }
 
   /** Reseñas de un usuario */
@@ -48,8 +55,9 @@ export class ResenaController {
 
   /** Últimas reseñas (top 10) */
   @Get('ultimas')
-  ultimas() {
-    return this.resenaService.obtenerUltimas();
+  @Header('Cache-Control', 'public, max-age=30, stale-while-revalidate=120')
+  ultimas(@Query('limit') limit?: number) {
+    return this.resenaService.obtenerUltimas(limit);
   }
 
   /** Media de puntuación para un negocio */

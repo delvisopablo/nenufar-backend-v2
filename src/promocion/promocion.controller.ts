@@ -2,12 +2,14 @@ import {
   Controller,
   Post,
   Get,
+  Header,
   Patch,
   Delete,
   Param,
   Body,
   Request,
   ParseIntPipe,
+  Query,
 } from '@nestjs/common';
 import { PromocionService } from './promocion.service';
 import { CreatePromocionDto } from './dto/create-promocion.dto';
@@ -44,18 +46,23 @@ export class PromocionController {
   }
 
   @Get()
-  findAll() {
-    return this.promocionService.listarDisponibles();
+  @Header('Cache-Control', 'public, max-age=30, stale-while-revalidate=120')
+  findAll(@Query('limit') limit?: number) {
+    return this.promocionService.listarDisponibles(limit);
   }
 
   @Get('activas')
-  findActivas() {
-    return this.promocionService.listarDisponibles();
+  @Header('Cache-Control', 'public, max-age=30, stale-while-revalidate=120')
+  findActivas(@Query('limit') limit?: number) {
+    return this.promocionService.listarDisponibles(limit);
   }
 
   @Get('negocio/:id')
-  findByNegocio(@Param('id', ParseIntPipe) id: number) {
-    return this.promocionService.listarPorNegocio(id);
+  findByNegocio(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.promocionService.listarPorNegocio(id, limit);
   }
 
   @Post(':id/validar')

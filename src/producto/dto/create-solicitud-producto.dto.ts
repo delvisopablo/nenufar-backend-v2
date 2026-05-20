@@ -32,3 +32,16 @@ export class CreateSolicitudProductoDto {
   @Min(1)
   resenaId?: number;
 }
+
+export class AprobarSolicitudProductoDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  precio?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  foto?: string;
+}

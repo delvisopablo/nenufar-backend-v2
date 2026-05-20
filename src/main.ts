@@ -25,7 +25,7 @@ const defaultAllowedOrigins = [
   'http://localhost:4200',
   'http://127.0.0.1:4200',
 ];
-const globalPrefixExclusions = new Set(['/health']);
+const globalPrefixExclusions = new Set(['/health', '/api/health']);
 
 type RouteLayer = {
   route?: {
@@ -181,7 +181,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   setupApp(app);
   app.setGlobalPrefix(globalPrefix, {
-    exclude: [{ path: 'health', method: RequestMethod.GET }],
+    exclude: [
+      { path: 'health', method: RequestMethod.GET },
+      { path: 'api/health', method: RequestMethod.GET },
+    ],
   });
 
   const corsOrigins = getAllowedCorsOrigins();

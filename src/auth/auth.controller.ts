@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Post,
   Req,
   Res,
@@ -75,6 +76,7 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('me')
+  @Header('Cache-Control', 'no-store')
   async me(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     return this.authService.me(req, res);
   }

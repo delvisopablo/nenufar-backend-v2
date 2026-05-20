@@ -28,6 +28,7 @@ import { CreateNegocioMiembroDto } from './dto/create-negocio-miembro.dto';
 import { UpdateNegocioMiembroDto } from './dto/update-negocio-miembro.dto';
 import { CreateVisitaNegocioDto } from './dto/create-visita-negocio.dto';
 import { LogroEngineService } from '../logro/logro-engine.service';
+import { AccionLogro } from '../logro/logro-accion';
 import {
   generateUniqueNegocioSlug,
   slugifyNegocioNombre,
@@ -40,7 +41,7 @@ import {
 
 function toPaging(page?: number | string, limit?: number | string) {
   const p = Math.max(1, Number(page ?? 1) | 0);
-  const l = Math.max(1, Math.min(100, Number(limit ?? 20) | 0));
+  const l = Math.max(1, Math.min(50, Number(limit ?? 12) | 0));
   return { skip: (p - 1) * l, take: l, page: p, limit: l };
 }
 
@@ -101,6 +102,22 @@ export class NegocioService {
     private readonly logroEngine: LogroEngineService,
   ) {}
 
+  private registrarLogroEnSegundoPlano(
+    usuarioId: number,
+    accion: AccionLogro,
+    refId?: number,
+  ) {
+    void Promise.resolve()
+      .then(() =>
+        this.logroEngine.registrarAccion({
+          usuarioId,
+          accion,
+          refId,
+        }),
+      )
+      .catch(() => undefined);
+  }
+
   private normalizeHorarioPayload(horario: unknown) {
     if (horario === undefined) {
       return undefined;
@@ -110,10 +127,14 @@ export class NegocioService {
   }
 
   private toPrismaHorarioValue(horario: HorarioJson | null) {
-    return horario === null ? Prisma.JsonNull : (horario as Prisma.InputJsonValue);
+    return horario === null
+      ? Prisma.JsonNull
+      : (horario as Prisma.InputJsonValue);
   }
 
-  private cleanHorarioForResponse(horario?: Prisma.JsonValue | HorarioJson | null) {
+  private cleanHorarioForResponse(
+    horario?: Prisma.JsonValue | HorarioJson | null,
+  ) {
     const normalizedHorario = horario as HorarioJson | null | undefined;
     return normalizedHorario && hasOpenDays(normalizedHorario)
       ? normalizedHorario
@@ -376,9 +397,15 @@ export class NegocioService {
           id: true,
           nombre: true,
           slug: true,
+          descripcionCorta: true,
           historia: true,
           direccion: true,
+          fotoPerfil: true,
+          fotoPortada: true,
+          nenufarActivo: true,
+          nenufarAsset: true,
           categoria: { select: { id: true, nombre: true } },
+          subcategoria: { select: { id: true, nombre: true } },
         },
         orderBy: { creadoEn: 'desc' },
         skip,
@@ -387,7 +414,103 @@ export class NegocioService {
       this.prisma.negocio.count({ where }),
     ]);
 
-    return { items, total, page: p, limit: l };
+    const negocioIds = items.map((item) => item.id);
+    const [resenasAgg, promociones] = negocioIds.length
+      ? await this.prisma.$transaction([
+          this.prisma.resena.groupBy({
+            by: ['negocioId'],
+            orderBy: { negocioId: 'asc' },
+            where: {
+              negocioId: { in: negocioIds },
+              eliminadoEn: null,
+              estado: ContenidoEstado.PUBLICADO,
+            },
+            _avg: { puntuacion: true },
+            _count: { _all: true },
+          }),
+          this.prisma.promocion.findMany({
+            where: {
+              negocioId: { in: negocioIds },
+              activa: true,
+              eliminadoEn: null,
+              estado: ContenidoEstado.PUBLICADO,
+              fechaCaducidad: { gte: new Date() },
+            },
+            select: {
+              id: true,
+              titulo: true,
+              descuento: true,
+              tipoDescuento: true,
+              fechaCaducidad: true,
+              negocioId: true,
+            },
+            orderBy: [{ fechaCaducidad: 'asc' }, { id: 'asc' }],
+            take: negocioIds.length * 2,
+          }),
+        ])
+      : [[], []];
+
+    const statsByNegocio = new Map(
+      resenasAgg.map((item) => {
+        const count =
+          typeof item._count === 'object' ? (item._count._all ?? 0) : 0;
+        return [
+          item.negocioId,
+          {
+            mediaResenas:
+              typeof item._avg?.puntuacion === 'number'
+                ? Number(item._avg.puntuacion.toFixed(1))
+                : 0,
+            resenasCount: count,
+          },
+        ];
+      }),
+    );
+    const promoByNegocio = new Map<number, (typeof promociones)[number]>();
+    for (const promocion of promociones) {
+      if (!promoByNegocio.has(promocion.negocioId)) {
+        promoByNegocio.set(promocion.negocioId, promocion);
+      }
+    }
+
+    return {
+      items: items.map((item) => {
+        const stats = statsByNegocio.get(item.id) ?? {
+          mediaResenas: 0,
+          resenasCount: 0,
+        };
+        const promocion = promoByNegocio.get(item.id);
+        return {
+          ...item,
+          rating: stats.mediaResenas,
+          ratingMedio: stats.mediaResenas,
+          mediaResenas: stats.mediaResenas,
+          resenasCount: stats.resenasCount,
+          numeroResenas: stats.resenasCount,
+          promo: promocion
+            ? {
+                id: promocion.id,
+                titulo: promocion.titulo,
+                descuento: promocion.descuento,
+                tipoDescuento: promocion.tipoDescuento,
+                fechaCaducidad: promocion.fechaCaducidad,
+              }
+            : null,
+          promocionActiva: promocion
+            ? {
+                id: promocion.id,
+                titulo: promocion.titulo,
+                descuento: promocion.descuento,
+                tipoDescuento: promocion.tipoDescuento,
+                fechaCaducidad: promocion.fechaCaducidad,
+              }
+            : null,
+        };
+      }),
+      total,
+      page: p,
+      limit: l,
+    };
   }
 
   // DETAIL
@@ -484,7 +607,7 @@ export class NegocioService {
           : undefined,
     };
 
-    return this.prisma.$transaction(async (tx) => {
+    const negocio = await this.prisma.$transaction(async (tx) => {
       const negocio = await tx.negocio.create({ data });
       await tx.negocioMiembro.create({
         data: {
@@ -495,6 +618,16 @@ export class NegocioService {
       });
       return negocio;
     });
+
+    if (horario && hasOpenDays(horario)) {
+      this.registrarLogroEnSegundoPlano(
+        currentUserId,
+        'HORARIO_NEGOCIO_CONFIGURADO',
+        negocio.id,
+      );
+    }
+
+    return negocio;
   }
 
   // UPDATE
@@ -591,7 +724,17 @@ export class NegocioService {
       }
     }
 
-    return this.prisma.negocio.update({ where: { id }, data });
+    const negocio = await this.prisma.negocio.update({ where: { id }, data });
+
+    if (dto.horario !== undefined && horario && hasOpenDays(horario)) {
+      this.registrarLogroEnSegundoPlano(
+        n.duenoId,
+        'HORARIO_NEGOCIO_CONFIGURADO',
+        id,
+      );
+    }
+
+    return negocio;
   }
 
   // DELETE
@@ -713,7 +856,7 @@ export class NegocioService {
     const reservasActivas = dto.reservasActivas ?? n.reservasActivas;
     this.assertReservasConfig(reservasActivas, intervaloReserva, horario);
 
-    return this.prisma.negocio.update({
+    const negocio = await this.prisma.negocio.update({
       where: { id },
       data: {
         ...(dto.intervaloReserva !== undefined
@@ -737,10 +880,20 @@ export class NegocioService {
         reservasActivas: true,
         horario: true,
       },
-    }).then((negocio) => ({
+    });
+
+    if (dto.horario !== undefined && horario && hasOpenDays(horario)) {
+      this.registrarLogroEnSegundoPlano(
+        n.duenoId,
+        'HORARIO_NEGOCIO_CONFIGURADO',
+        id,
+      );
+    }
+
+    return {
       ...negocio,
       horario: this.cleanHorarioForResponse(negocio.horario),
-    }));
+    };
   }
 
   // GET HORARIO
@@ -842,13 +995,16 @@ export class NegocioService {
       where: { negocioId },
     });
 
-    void this.logroEngine
-      .registrarAccion({
-        usuarioId: actorUserId,
-        accion: 'NEGOCIO_SEGUIDO',
-        refId: negocioId,
-      })
-      .catch(() => undefined);
+    this.registrarLogroEnSegundoPlano(
+      actorUserId,
+      'NEGOCIO_SEGUIDO',
+      negocioId,
+    );
+    this.registrarLogroEnSegundoPlano(
+      negocio.duenoId,
+      'HITO_NEGOCIO',
+      negocioId,
+    );
 
     return { followed: true, siguiendo: true, total };
   }
@@ -1168,13 +1324,21 @@ export class NegocioService {
     });
 
     if (actorUserId && Number.isInteger(actorUserId) && actorUserId > 0) {
-      void this.logroEngine
-        .registrarAccion({
-          usuarioId: actorUserId,
-          accion: 'VISITA_NEGOCIO',
-          refId: negocioId,
-        })
-        .catch(() => undefined);
+      this.registrarLogroEnSegundoPlano(
+        actorUserId,
+        'VISITA_NEGOCIO',
+        negocioId,
+      );
+      this.registrarLogroEnSegundoPlano(
+        actorUserId,
+        'VISITA_TODAS_CATEGORIAS',
+        negocioId,
+      );
+      this.registrarLogroEnSegundoPlano(
+        actorUserId,
+        'VISITA_TODAS_SUBCATEGORIAS',
+        negocioId,
+      );
     }
 
     return {

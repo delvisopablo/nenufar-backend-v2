@@ -6,6 +6,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   ParseIntPipe,
   Patch,
@@ -58,6 +59,7 @@ export class NegocioController {
   }
 
   @Get()
+  @Header('Cache-Control', 'public, max-age=30, stale-while-revalidate=120')
   findAll(@Query() q: QueryNegocioDto) {
     return this.service.list(q);
   }
@@ -87,13 +89,21 @@ export class NegocioController {
   }
 
   @Get(':id/resenas')
-  resenas(@Param('id', ParseIntPipe) id: number) {
-    return this.resenaService.getResenasPorNegocio(id);
+  @Header('Cache-Control', 'public, max-age=30, stale-while-revalidate=120')
+  resenas(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.resenaService.getResenasPorNegocio(id, limit);
   }
 
   @Get(':id/promociones')
-  promociones(@Param('id', ParseIntPipe) id: number) {
-    return this.promocionService.listarPublicasPorNegocio(id);
+  @Header('Cache-Control', 'public, max-age=30, stale-while-revalidate=120')
+  promociones(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.promocionService.listarPublicasPorNegocio(id, limit);
   }
 
   @Get(':id/seguidores')

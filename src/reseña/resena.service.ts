@@ -10,10 +10,11 @@ import { CreateResenaDto } from './dto/create-resena.dto';
 import { UpdateResenaDto } from './dto/update-resena.dto';
 import { LogroEngineService } from '../logro/logro-engine.service';
 import { NotificacionService } from '../notificacion/notificacion.service';
-import {
-  mapResenaPublic,
-  resenaPublicSelect,
-} from './resena-public.util';
+import { mapResenaPublic, resenaPublicSelect } from './resena-public.util';
+
+function toLimit(limit?: number | string, fallback = 10) {
+  return Math.max(1, Math.min(50, Number(limit ?? fallback) | 0));
+}
 
 @Injectable()
 export class ResenaService {
@@ -24,8 +25,9 @@ export class ResenaService {
   ) {}
 
   /** Listado global (paginable si quieres luego) */
-  async todasLasResenas() {
+  async todasLasResenas(limit?: number | string) {
     const resenas = await this.prisma.resena.findMany({
+      take: toLimit(limit, 20),
       where: {
         eliminadoEn: null,
         estado: ContenidoEstado.PUBLICADO,
@@ -42,8 +44,9 @@ export class ResenaService {
   }
 
   /** Reseñas por negocio */
-  async getResenasPorNegocio(negocioId: number) {
+  async getResenasPorNegocio(negocioId: number, limit?: number | string) {
     const resenas = await this.prisma.resena.findMany({
+      take: toLimit(limit, 20),
       where: {
         negocioId,
         eliminadoEn: null,
@@ -61,8 +64,9 @@ export class ResenaService {
   }
 
   /** Reseñas por usuario */
-  async findByUsuarioId(usuarioId: number) {
+  async findByUsuarioId(usuarioId: number, limit?: number | string) {
     const resenas = await this.prisma.resena.findMany({
+      take: toLimit(limit, 20),
       where: {
         usuarioId,
         eliminadoEn: null,
@@ -80,9 +84,9 @@ export class ResenaService {
   }
 
   /** Últimas N reseñas (por defecto 10) */
-  async obtenerUltimas(limit = 10) {
+  async obtenerUltimas(limit?: number | string) {
     const resenas = await this.prisma.resena.findMany({
-      take: limit,
+      take: toLimit(limit, 10),
       where: {
         eliminadoEn: null,
         estado: ContenidoEstado.PUBLICADO,
@@ -119,133 +123,139 @@ export class ResenaService {
     const productoIds = [...new Set(dto.productoIds ?? [])];
     const productosSugeridos = dto.productosSugeridos ?? [];
 
-    const { postId, resenaId } = await this.prisma.$transaction(async (tx) => {
-      const negocio = await tx.negocio.findFirst({
-        where: {
-          id: dto.negocioId,
-          eliminadoEn: null,
-          activo: true,
-        },
-        select: { duenoId: true },
-      });
-
-      if (!negocio) {
-        throw new NotFoundException('Negocio no encontrado');
-      }
-
-      if (productoIds.length > 0) {
-        const productos = await tx.producto.findMany({
+    const { postId, resenaId, duenoId } = await this.prisma.$transaction(
+      async (tx) => {
+        const negocio = await tx.negocio.findFirst({
           where: {
-            id: { in: productoIds },
-            negocioId: dto.negocioId,
-            activo: true,
+            id: dto.negocioId,
             eliminadoEn: null,
+            activo: true,
+          },
+          select: { duenoId: true },
+        });
+
+        if (!negocio) {
+          throw new NotFoundException('Negocio no encontrado');
+        }
+
+        if (productoIds.length > 0) {
+          const productos = await tx.producto.findMany({
+            where: {
+              id: { in: productoIds },
+              negocioId: dto.negocioId,
+              activo: true,
+              eliminadoEn: null,
+            },
+            select: { id: true },
+          });
+
+          if (productos.length !== productoIds.length) {
+            throw new BadRequestException(
+              'Algunos productos no existen o no pertenecen al negocio',
+            );
+          }
+        }
+
+        const resena = await tx.resena.create({
+          data: {
+            negocioId: dto.negocioId,
+            usuarioId: userId,
+            puntuacion: dto.puntuacion,
+            contenido: dto.contenido ?? '',
+            selloNenufar: dto.selloNenufar ?? false,
           },
           select: { id: true },
         });
 
-        if (productos.length !== productoIds.length) {
-          throw new BadRequestException(
-            'Algunos productos no existen o no pertenecen al negocio',
-          );
+        if (productoIds.length > 0) {
+          await tx.resenaProducto.createMany({
+            data: productoIds.map((productoId) => ({
+              resenaId: resena.id,
+              productoId,
+            })),
+            skipDuplicates: true,
+          });
         }
-      }
 
-      const resena = await tx.resena.create({
-        data: {
-          negocioId: dto.negocioId,
-          usuarioId: userId,
-          puntuacion: dto.puntuacion,
-          contenido: dto.contenido ?? '',
-          selloNenufar: dto.selloNenufar ?? false,
-        },
-        select: { id: true },
-      });
+        if (productosSugeridos.length > 0) {
+          const sugerenciasNormalizadas = productosSugeridos.map((item) => {
+            const nombre = item.nombre.trim();
+            if (!nombre) {
+              throw new BadRequestException(
+                'Los productos sugeridos deben tener nombre',
+              );
+            }
 
-      if (productoIds.length > 0) {
-        await tx.resenaProducto.createMany({
-          data: productoIds.map((productoId) => ({
-            resenaId: resena.id,
-            productoId,
-          })),
-          skipDuplicates: true,
-        });
-      }
+            return {
+              nombre,
+              descripcion: item.descripcion?.trim() || null,
+              precioSugerido: item.precioSugerido ?? null,
+            };
+          });
 
-      if (productosSugeridos.length > 0) {
-        const sugerenciasNormalizadas = productosSugeridos.map((item) => {
-          const nombre = item.nombre.trim();
-          if (!nombre) {
-            throw new BadRequestException(
-              'Los productos sugeridos deben tener nombre',
-            );
-          }
+          await tx.solicitudProductoCatalogo.createMany({
+            data: sugerenciasNormalizadas.map((item) => ({
+              negocioId: dto.negocioId,
+              usuarioId: userId,
+              resenaId: resena.id,
+              nombre: item.nombre,
+              descripcion: item.descripcion,
+              precioSugerido: item.precioSugerido,
+            })),
+          });
+        }
 
-          return {
-            nombre,
-            descripcion: item.descripcion?.trim() || null,
-            precioSugerido: item.precioSugerido ?? null,
-          };
-        });
-
-        await tx.solicitudProductoCatalogo.createMany({
-          data: sugerenciasNormalizadas.map((item) => ({
-            negocioId: dto.negocioId,
+        const post = await tx.post.create({
+          data: {
             usuarioId: userId,
+            tipo: PostTipo.RESENA,
+            negocioId: dto.negocioId,
             resenaId: resena.id,
-            nombre: item.nombre,
-            descripcion: item.descripcion,
-            precioSugerido: item.precioSugerido,
-          })),
+          },
+          select: { id: true },
         });
-      }
 
-      const post = await tx.post.create({
-        data: {
-          usuarioId: userId,
-          tipo: PostTipo.RESENA,
-          negocioId: dto.negocioId,
-          resenaId: resena.id,
-        },
-        select: { id: true },
-      });
-
-      const autor = await tx.usuario.update({
-        where: { id: userId },
-        data: { petalosSaldo: { increment: 5 } },
-        select: { petalosSaldo: true },
-      });
-      await tx.petaloTx.create({
-        data: {
-          usuarioId: userId,
-          delta: 5,
-          saldoResultante: autor.petalosSaldo,
-          motivo: MotivoTx.RESENA_AUTOR,
-          refTipo: 'Resena',
-          refId: resena.id,
-        },
-      });
-
-      if (negocio.duenoId && negocio.duenoId !== userId) {
-        const saldoDueno = await tx.usuario.update({
-          where: { id: negocio.duenoId },
+        const autor = await tx.usuario.update({
+          where: { id: userId },
           data: { petalosSaldo: { increment: 5 } },
           select: { petalosSaldo: true },
         });
         await tx.petaloTx.create({
           data: {
-            usuarioId: negocio.duenoId,
+            usuarioId: userId,
             delta: 5,
-            saldoResultante: saldoDueno.petalosSaldo,
-            motivo: MotivoTx.RESENA_NEGOCIO,
+            saldoResultante: autor.petalosSaldo,
+            motivo: MotivoTx.RESENA_AUTOR,
             refTipo: 'Resena',
             refId: resena.id,
           },
         });
-      }
 
-      return { resenaId: resena.id, postId: post.id };
-    });
+        if (negocio.duenoId && negocio.duenoId !== userId) {
+          const saldoDueno = await tx.usuario.update({
+            where: { id: negocio.duenoId },
+            data: { petalosSaldo: { increment: 5 } },
+            select: { petalosSaldo: true },
+          });
+          await tx.petaloTx.create({
+            data: {
+              usuarioId: negocio.duenoId,
+              delta: 5,
+              saldoResultante: saldoDueno.petalosSaldo,
+              motivo: MotivoTx.RESENA_NEGOCIO,
+              refTipo: 'Resena',
+              refId: resena.id,
+            },
+          });
+        }
+
+        return {
+          resenaId: resena.id,
+          postId: post.id,
+          duenoId: negocio.duenoId,
+        };
+      },
+    );
 
     void this.notificaciones
       .fanoutNegocio({
@@ -265,6 +275,32 @@ export class ResenaService {
         refId: resenaId,
       })
       .catch(() => undefined);
+
+    void this.logroEngine
+      .registrarAccion({
+        usuarioId: userId,
+        accion: 'RESENAS_DIFERENTES_PUNTUACIONES',
+        refId: resenaId,
+      })
+      .catch(() => undefined);
+
+    void this.logroEngine
+      .registrarAccion({
+        usuarioId: userId,
+        accion: 'RESENAS_5_ESTRELLAS',
+        refId: resenaId,
+      })
+      .catch(() => undefined);
+
+    if (duenoId) {
+      void this.logroEngine
+        .registrarAccion({
+          usuarioId: duenoId,
+          accion: 'HITO_NEGOCIO',
+          refId: dto.negocioId,
+        })
+        .catch(() => undefined);
+    }
 
     const resena = await this.prisma.resena.findUnique({
       where: { id: resenaId },

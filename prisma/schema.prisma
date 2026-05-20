@@ -54,6 +54,18 @@ enum LogroTipo {
   OTRO
 }
 
+enum LogroCategoria {
+  GENERAL
+  EXPLORACION
+  RESENAS
+  COMPRAS
+  RESERVAS
+  PROMOCIONES
+  NEGOCIO
+  SOCIAL
+  ESPECIAL
+}
+
 enum Dificultad {
   FACIL
   MEDIA
@@ -484,6 +496,7 @@ model Promocion {
   @@index([codigo])
   @@index([estado])
   @@index([activa])
+  @@index([activa, estado, fechaCaducidad])
 }
 
 model Logro {
@@ -491,6 +504,9 @@ model Logro {
   titulo           String
   descripcion      String?
   tipo             LogroTipo
+  categoriaLogro   LogroCategoria @default(GENERAL)
+  oculto           Boolean    @default(false)
+  esFinal          Boolean    @default(false)
   accion           String?
   dificultad       Dificultad @default(FACIL)
   /// TODO: validar en backend/SQL manual que umbral > 0.
@@ -518,6 +534,9 @@ model Logro {
   @@index([negocioId])
   @@index([productoId])
   @@index([tipo])
+  @@index([categoriaLogro])
+  @@index([oculto])
+  @@index([esFinal])
   @@index([accion])
 }
 
@@ -726,6 +745,7 @@ model LogroUsuario {
   id            Int       @id @default(autoincrement())
   logroId       Int
   usuarioId     Int
+  progreso      Int       @default(0)
   veces         Int       @default(0)
   conseguido    Boolean   @default(false)
   conseguidoEn  DateTime?

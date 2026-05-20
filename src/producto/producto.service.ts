@@ -16,7 +16,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
 import { UpdateProductoStockDto } from './dto/update-producto-stock.dto';
-import { CreateSolicitudProductoDto } from './dto/create-solicitud-producto.dto';
+import {
+  AprobarSolicitudProductoDto,
+  CreateSolicitudProductoDto,
+} from './dto/create-solicitud-producto.dto';
 import { RechazarSolicitudProductoDto } from './dto/rechazar-solicitud-producto.dto';
 import {
   buildCodigoProducto,
@@ -277,6 +280,8 @@ export class ProductoService {
             id: true,
             nombre: true,
             slug: true,
+            nenufarActivo: true,
+            nenufarAsset: true,
           },
         },
       },
@@ -285,11 +290,19 @@ export class ProductoService {
     });
 
     return {
-      items: items.map((item) => ({
-        ...mapProductoCatalogo(item),
-        negocio: item.negocio,
-        slug: item.negocio.slug,
-      })),
+      items: items.map((item) => {
+        const producto = mapProductoCatalogo(item);
+        return {
+          ...producto,
+          producto,
+          negocio: item.negocio,
+          precio: producto.precio,
+          slug: item.negocio.slug,
+          nenufarActivo:
+            item.negocio.nenufarActivo ?? item.negocio.nenufarAsset ?? null,
+          nenufarAsset: item.negocio.nenufarAsset,
+        };
+      }),
       total: items.length,
     };
   }
@@ -563,6 +576,7 @@ export class ProductoService {
 
   async aprobarSolicitud(
     id: number,
+    dto: AprobarSolicitudProductoDto | undefined,
     actorUserId: number,
     isAdmin = false,
   ) {
@@ -594,12 +608,9 @@ export class ProductoService {
         {
           nombre: solicitud.nombre,
           descripcion: solicitud.descripcion,
-          precio:
-            solicitud.precioSugerido instanceof Prisma.Decimal
-              ? Number(solicitud.precioSugerido.toString())
-              : solicitud.precioSugerido ?? null,
+          precio: dto?.precio ?? solicitud.precioSugerido ?? 0,
+          foto: dto?.foto,
         },
-        { allowNullPrice: true },
       );
 
       if (solicitud.resenaId) {

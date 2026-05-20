@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ContenidoEstado, Prisma, RolGlobal } from '@prisma/client';
@@ -14,6 +15,7 @@ import {
   mapResenaPublic,
   resenaPublicSelect,
 } from '../reseña/resena-public.util';
+import { LogroEngineService } from '../logro/logro-engine.service';
 
 const publicUserSelect = {
   id: true,
@@ -44,7 +46,11 @@ function normalizeOptionalString(value?: string | null) {
 
 @Injectable()
 export class UsuarioService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    @Optional()
+    private readonly logroEngine?: LogroEngineService,
+  ) {}
 
   private toPublicUserResponse(user: PublicUserRecord) {
     return {
@@ -109,6 +115,13 @@ export class UsuarioService {
         },
         select: publicUserSelect,
       });
+
+      void this.logroEngine
+        ?.registrarAccion({
+          usuarioId: usuario.id,
+          accion: 'PERFIL_COMPLETADO',
+        })
+        .catch(() => undefined);
 
       return this.toPublicUserResponse(usuario);
     } catch (error) {
@@ -270,6 +283,13 @@ export class UsuarioService {
         },
         select: publicUserSelect,
       });
+
+      void this.logroEngine
+        ?.registrarAccion({
+          usuarioId: usuario.id,
+          accion: 'PERFIL_COMPLETADO',
+        })
+        .catch(() => undefined);
 
       return this.toPublicUserResponse(usuario);
     } catch (error) {

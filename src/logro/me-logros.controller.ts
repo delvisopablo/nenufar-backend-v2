@@ -28,6 +28,11 @@ export class MeLogrosController {
     return this.logroService.misLogros(this.getAuthenticatedUserId(req));
   }
 
+  @Get('resumen')
+  resumen(@Req() req: { user?: { id?: number } }) {
+    return this.logroService.resumenUsuario(this.getAuthenticatedUserId(req));
+  }
+
   @Get('progreso')
   progreso(@Req() req: { user?: { id?: number } }) {
     return this.logroService.progresoUsuario(this.getAuthenticatedUserId(req));

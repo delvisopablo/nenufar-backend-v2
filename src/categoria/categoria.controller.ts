@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   ParseIntPipe,
   Patch,
@@ -18,6 +19,7 @@ export class CategoriaController {
   constructor(private service: CategoriaService) {}
 
   @Get()
+  @Header('Cache-Control', 'public, max-age=300, stale-while-revalidate=600')
   list(
     @Query('q') q?: string,
     @Query('sort') sort?: 'nombre' | '-nombre',
@@ -37,11 +39,13 @@ export class CategoriaController {
   }
 
   @Get(':id/subcategorias')
+  @Header('Cache-Control', 'public, max-age=300, stale-while-revalidate=600')
   listSubcategorias(@Param('id', ParseIntPipe) id: number) {
     return this.service.listSubcategorias(id);
   }
 
   @Get(':id')
+  @Header('Cache-Control', 'public, max-age=300, stale-while-revalidate=600')
   get(
     @Param('id', ParseIntPipe) id: number,
     @Query('includeCounts') includeCounts?: string,

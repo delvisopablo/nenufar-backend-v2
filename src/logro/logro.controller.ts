@@ -9,6 +9,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { LogroCategoria } from '@prisma/client';
 import { LogroService } from './logro.service';
 import { CreateLogroDto } from './dto/create-logro.dto';
 import { UpdateLogroDto } from './dto/update-logro.dto';
@@ -23,14 +24,26 @@ export class LogroController {
   }
 
   @Get()
-  findAll(@Query('negocioId') negocioId?: string) {
+  findAll(
+    @Query('negocioId') negocioId?: string,
+    @Query('categoriaLogro') categoriaLogro?: string,
+    @Query('incluirOcultos') incluirOcultos?: string,
+  ) {
     const parsedNegocioId = negocioId ? Number(negocioId) : NaN;
+    const parsedCategoriaLogro = Object.values(LogroCategoria).includes(
+      categoriaLogro as LogroCategoria,
+    )
+      ? (categoriaLogro as LogroCategoria)
+      : undefined;
 
-    return this.service.findAll(
-      Number.isInteger(parsedNegocioId) && parsedNegocioId > 0
-        ? parsedNegocioId
-        : undefined,
-    );
+    return this.service.findAll({
+      negocioId:
+        Number.isInteger(parsedNegocioId) && parsedNegocioId > 0
+          ? parsedNegocioId
+          : undefined,
+      categoriaLogro: parsedCategoriaLogro,
+      incluirOcultos: incluirOcultos === 'true',
+    });
   }
 
   @Patch(':id')

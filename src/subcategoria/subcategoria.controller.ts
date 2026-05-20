@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   ParseIntPipe,
   Patch,
@@ -19,11 +20,13 @@ export class SubcategoriaController {
   constructor(private readonly service: SubcategoriaService) {}
 
   @Get()
+  @Header('Cache-Control', 'public, max-age=300, stale-while-revalidate=600')
   list(@Query() query: QuerySubcategoriaDto) {
     return this.service.list(query);
   }
 
   @Get(':id')
+  @Header('Cache-Control', 'public, max-age=300, stale-while-revalidate=600')
   get(@Param('id', ParseIntPipe) id: number) {
     return this.service.getById(id);
   }

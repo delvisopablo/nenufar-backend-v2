@@ -12,7 +12,7 @@ describe('AppController', () => {
       providers: [
         {
           provide: ResenaService,
-          useValue: { todasLasResenas: jest.fn().mockResolvedValue([]) },
+          useValue: { obtenerUltimas: jest.fn().mockResolvedValue([]) },
         },
         {
           provide: PromocionService,

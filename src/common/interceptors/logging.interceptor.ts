@@ -29,6 +29,11 @@ function getRequestPath(req: RequestWithAuth) {
 
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
+  private readonly slowRequestThresholdMs = Math.max(
+    100,
+    Number(process.env.SLOW_REQUEST_MS ?? 1000) | 0,
+  );
+
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     if (context.getType() !== 'http') {
       return next.handle();
@@ -47,6 +52,17 @@ export class LoggingInterceptor implements NestInterceptor {
       StructuredLogger.info(
         `[REQ] ${req.method} ${getRequestPath(req)} ${res.statusCode} ${durationMs}ms rid=${req.requestId ?? '-'} user=${getRequestUserId(req)}`,
       );
+
+      if (durationMs >= this.slowRequestThresholdMs) {
+        StructuredLogger.warn('http_request', {
+          requestId: req.requestId,
+          method: req.method,
+          path: getRequestPath(req),
+          statusCode: res.statusCode,
+          durationMs,
+          slow: true,
+        });
+      }
     });
 
     return next.handle();

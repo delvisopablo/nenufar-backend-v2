@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Header } from '@nestjs/common';
 import { ResenaService } from './reseña/resena.service';
 import { PromocionService } from './promocion/promocion.service';
 
@@ -10,9 +10,10 @@ export class AppController {
   ) {}
 
   @Get()
+  @Header('Cache-Control', 'public, max-age=30, stale-while-revalidate=120')
   async inicio() {
     const [resenas, promos] = await Promise.all([
-      this.resenaService.todasLasResenas(),
+      this.resenaService.obtenerUltimas(10),
       this.promocionService.listarActivas(),
     ]);
     return {

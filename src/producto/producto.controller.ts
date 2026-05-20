@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   Body,
   Controller,
@@ -19,7 +18,10 @@ import { ProductoService } from './producto.service';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
 import { UpdateProductoStockDto } from './dto/update-producto-stock.dto';
-import { CreateSolicitudProductoDto } from './dto/create-solicitud-producto.dto';
+import {
+  AprobarSolicitudProductoDto,
+  CreateSolicitudProductoDto,
+} from './dto/create-solicitud-producto.dto';
 import { RechazarSolicitudProductoDto } from './dto/rechazar-solicitud-producto.dto';
 
 @Controller()
@@ -121,10 +123,14 @@ export class ProductoController {
   }
 
   @Patch('solicitudes-producto/:id/aprobar')
-  aprobarSolicitud(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+  aprobarSolicitud(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AprobarSolicitudProductoDto,
+    @Req() req: any,
+  ) {
     const currentUserId = this.getAuthenticatedUserId(req);
     const isAdmin = !!req.user?.isAdmin;
-    return this.service.aprobarSolicitud(id, currentUserId, isAdmin);
+    return this.service.aprobarSolicitud(id, dto, currentUserId, isAdmin);
   }
 
   @Patch('solicitudes-producto/:id/rechazar')

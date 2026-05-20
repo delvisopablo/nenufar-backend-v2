@@ -203,14 +203,15 @@ describe('AuthService', () => {
     );
     expect(res.cookie).toHaveBeenCalledTimes(2);
     expect(nenufarizarService.procesarReferido).not.toHaveBeenCalled();
-    expect(result).toEqual({
+    expect(result).toEqual(expect.objectContaining({
+      access_token: 'access-token',
       usuario: expect.objectContaining({
         id: 7,
         nombre: 'Ada',
         nickname: 'ada',
         email: 'ada@example.com',
       }),
-    });
+    }));
   });
 
   it('register traduce P2002 a 409', async () => {
@@ -304,12 +305,13 @@ describe('AuthService', () => {
       { cookie: jest.fn() } as any,
     );
 
-    expect(result).toEqual({
+    expect(result).toEqual(expect.objectContaining({
+      access_token: 'access-token',
       usuario: expect.objectContaining({
         id: 7,
         nombre: 'Ada',
       }),
-    });
+    }));
     expect(nenufarizarService.procesarReferido).toHaveBeenCalledWith(
       7,
       'FAIL01',

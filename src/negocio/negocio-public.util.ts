@@ -1,16 +1,30 @@
 import { Prisma } from '@prisma/client';
+import { hasOpenDays, HorarioJson } from './horario.util';
 
 export const negocioPublicSelect = {
   id: true,
   nombre: true,
   slug: true,
+  duenoId: true,
+  descripcionCorta: true,
+  historia: true,
+  direccion: true,
   fotoPerfil: true,
   fotoPortada: true,
   nenufarColor: true,
   nenufarActivo: true,
   nenufarKey: true,
   nenufarAsset: true,
+  horario: true,
+  intervaloReserva: true,
+  reservasActivas: true,
   categoria: {
+    select: {
+      id: true,
+      nombre: true,
+    },
+  },
+  subcategoria: {
     select: {
       id: true,
       nombre: true,
@@ -31,6 +45,10 @@ export function mapNegocioPublic(negocio: NegocioPublic | null | undefined) {
     ...negocio,
     // `slug` es el handle público disponible hoy para negocio.
     nickname: negocio.slug ?? null,
+    horario:
+      negocio.horario && hasOpenDays(negocio.horario as HorarioJson)
+        ? negocio.horario
+        : null,
     nenufarActivo:
       negocio.nenufarActivo ??
       negocio.nenufarAsset ??

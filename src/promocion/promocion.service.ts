@@ -3,7 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
-import { ContenidoEstado } from '@prisma/client';
+import { ContenidoEstado, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePromocionDto } from './dto/create-promocion.dto';
 import { UpdatePromocionDto } from './dto/update-promocion.dto';
@@ -20,6 +20,47 @@ function normalizeOptionalString(value?: string | null) {
   const normalized = value?.trim();
   return normalized || null;
 }
+
+function toLimit(limit?: number | string, fallback = 12) {
+  return Math.max(1, Math.min(50, Number(limit ?? fallback) | 0));
+}
+
+const promocionPublicSelect = {
+  id: true,
+  titulo: true,
+  descripcion: true,
+  descuento: true,
+  tipoDescuento: true,
+  fechaInicio: true,
+  fechaCaducidad: true,
+  codigo: true,
+  stockMaximo: true,
+  usosMaximos: true,
+  usosActuales: true,
+  negocioId: true,
+  productoId: true,
+  negocio: {
+    select: negocioPublicSelect,
+  },
+  producto: {
+    select: {
+      id: true,
+      nombre: true,
+      precio: true,
+      foto: true,
+      codigoProducto: true,
+    },
+  },
+  pack: {
+    select: {
+      id: true,
+      nombre: true,
+      precio: true,
+      foto: true,
+      codigoProducto: true,
+    },
+  },
+} satisfies Prisma.PromocionSelect;
 
 @Injectable()
 export class PromocionService {
@@ -138,7 +179,7 @@ export class PromocionService {
     });
   }
 
-  async listarActivas() {
+  async listarActivas(limit?: number | string) {
     const promociones = await this.prisma.promocion.findMany({
       where: {
         activa: true,
@@ -150,24 +191,15 @@ export class PromocionService {
           eliminadoEn: null,
         },
       },
-      select: {
-        id: true,
-        titulo: true,
-        descuento: true,
-        tipoDescuento: true,
-        fechaCaducidad: true,
-        negocio: {
-          select: negocioPublicSelect,
-        },
-      },
+      select: promocionPublicSelect,
       orderBy: { fechaCaducidad: 'asc' },
-      take: 10,
+      take: toLimit(limit, 10),
     });
 
     return promociones.map((promocion) => this.mapPromocion(promocion));
   }
 
-  async listarDisponibles() {
+  async listarDisponibles(limit?: number | string) {
     const promociones = await this.prisma.promocion.findMany({
       where: {
         activa: true,
@@ -181,34 +213,26 @@ export class PromocionService {
           eliminadoEn: null,
         },
       },
-      include: {
-        negocio: {
-          select: negocioPublicSelect,
-        },
-        producto: true,
-        pack: true,
-      },
+      select: promocionPublicSelect,
+      orderBy: { fechaCaducidad: 'asc' },
+      take: toLimit(limit, 12),
     });
 
     return promociones.map((promocion) => this.mapPromocion(promocion));
   }
 
-  async listarPorNegocio(negocioId: number) {
+  async listarPorNegocio(negocioId: number, limit?: number | string) {
     const promociones = await this.prisma.promocion.findMany({
       where: { negocioId },
-      include: {
-        negocio: {
-          select: negocioPublicSelect,
-        },
-        producto: true,
-        pack: true,
-      },
+      select: promocionPublicSelect,
+      orderBy: [{ fechaCaducidad: 'asc' }, { id: 'asc' }],
+      take: toLimit(limit, 50),
     });
 
     return promociones.map((promocion) => this.mapPromocion(promocion));
   }
 
-  async listarPublicasPorNegocio(negocioId: number) {
+  async listarPublicasPorNegocio(negocioId: number, limit?: number | string) {
     const promociones = await this.prisma.promocion.findMany({
       where: {
         negocioId,
@@ -220,13 +244,9 @@ export class PromocionService {
           eliminadoEn: null,
         },
       },
-      include: {
-        negocio: {
-          select: negocioPublicSelect,
-        },
-        producto: true,
-        pack: true,
-      },
+      select: promocionPublicSelect,
+      orderBy: { fechaCaducidad: 'asc' },
+      take: toLimit(limit, 12),
     });
 
     return promociones.map((promocion) => this.mapPromocion(promocion));
