@@ -13,6 +13,7 @@ import {
   buildAvailabilitySlots,
   dateFromYMDAndMinutes,
   getRangosParaFecha,
+  normalizeHorarioForRead,
   toMinutes,
 } from '../negocio/horario.util';
 import { QueryNegocioReservasDto } from './dto/query-negocio-reservas.dto';
@@ -253,7 +254,7 @@ export class ReservaService {
     }
 
     const rangos = this.getRangosParaFecha(
-      negocio.horario as HorarioJson | null,
+      normalizeHorarioForRead(negocio.horario),
       ymd,
     );
     if (rangos === null) {
@@ -345,7 +346,7 @@ export class ReservaService {
     }
 
     const rangos = this.getRangosParaFecha(
-      negocio.horario as HorarioJson | null,
+      normalizeHorarioForRead(negocio.horario),
       ymd,
     );
     if (rangos === null) {

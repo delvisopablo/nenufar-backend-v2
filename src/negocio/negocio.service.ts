@@ -7,6 +7,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -36,7 +37,9 @@ import {
 import {
   HorarioJson,
   hasOpenDays,
+  normalizeHorarioForRead,
   normalizeHorarioInput,
+  summarizeHorarioForLog,
 } from './horario.util';
 
 function toPaging(page?: number | string, limit?: number | string) {
@@ -97,6 +100,8 @@ const negocioProfileSelect = {
 
 @Injectable()
 export class NegocioService {
+  private readonly logger = new Logger(NegocioService.name);
+
   constructor(
     private prisma: PrismaService,
     private readonly logroEngine: LogroEngineService,
@@ -135,10 +140,29 @@ export class NegocioService {
   private cleanHorarioForResponse(
     horario?: Prisma.JsonValue | HorarioJson | null,
   ) {
-    const normalizedHorario = horario as HorarioJson | null | undefined;
-    return normalizedHorario && hasOpenDays(normalizedHorario)
-      ? normalizedHorario
-      : null;
+    return normalizeHorarioForRead(horario);
+  }
+
+  private logHorarioDebug(
+    action: string,
+    horario: unknown,
+    options: {
+      negocioId?: number;
+      provided?: boolean;
+      intervaloReserva?: number | null;
+      reservasActivas?: boolean;
+    } = {},
+  ) {
+    if (
+      process.env.NODE_ENV === 'production' ||
+      process.env.NODE_ENV === 'test'
+    ) {
+      return;
+    }
+
+    this.logger.debug(
+      `[${action}] horario negocioId=${options.negocioId ?? 'pending'} provided=${String(options.provided ?? true)} ${summarizeHorarioForLog(horario)} intervaloReserva=${options.intervaloReserva ?? 'null'} reservasActivas=${String(options.reservasActivas ?? false)}`,
+    );
   }
 
   private assertReservasConfig(
@@ -203,12 +227,19 @@ export class NegocioService {
       nickname: negocio.dueno.nickname,
       foto: negocio.dueno.foto,
     };
+    const horario = this.cleanHorarioForResponse(negocio.horario);
+
+    this.logHorarioDebug('perfil-negocio horario devuelto', horario, {
+      negocioId: negocio.id,
+      intervaloReserva: negocio.intervaloReserva,
+      reservasActivas: negocio.reservasActivas,
+    });
 
     return {
       ...negocio,
       dueno,
       nickname: negocio.slug ?? null,
-      horario: this.cleanHorarioForResponse(negocio.horario),
+      horario,
       // TODO: cuando exista saldo propio de Negocio, reemplazar este fallback al saldo del dueño.
       petalosBalance: negocio.dueno.petalosSaldo,
       petalos: negocio.dueno.petalosSaldo,
@@ -404,6 +435,9 @@ export class NegocioService {
           fotoPortada: true,
           nenufarActivo: true,
           nenufarAsset: true,
+          horario: true,
+          intervaloReserva: true,
+          reservasActivas: true,
           categoria: { select: { id: true, nombre: true } },
           subcategoria: { select: { id: true, nombre: true } },
         },
@@ -482,6 +516,7 @@ export class NegocioService {
         const promocion = promoByNegocio.get(item.id);
         return {
           ...item,
+          horario: this.cleanHorarioForResponse(item.horario),
           rating: stats.mediaResenas,
           ratingMedio: stats.mediaResenas,
           mediaResenas: stats.mediaResenas,
@@ -584,6 +619,11 @@ export class NegocioService {
       dto.intervaloReserva,
       horario ?? null,
     );
+    this.logHorarioDebug('crear-negocio horario recibido', dto.horario, {
+      provided: dto.horario !== undefined,
+      intervaloReserva: dto.intervaloReserva,
+      reservasActivas,
+    });
 
     const slug = dto.slug?.trim()
       ? await this.resolveRequestedSlug(dto.slug)
@@ -627,6 +667,12 @@ export class NegocioService {
       );
     }
 
+    this.logHorarioDebug('crear-negocio horario guardado', negocio.horario, {
+      negocioId: negocio.id,
+      intervaloReserva: negocio.intervaloReserva,
+      reservasActivas: negocio.reservasActivas,
+    });
+
     return negocio;
   }
 
@@ -654,10 +700,18 @@ export class NegocioService {
     const horario =
       dto.horario !== undefined
         ? this.normalizeHorarioPayload(dto.horario)
-        : (n.horario as HorarioJson | null);
+        : this.cleanHorarioForResponse(n.horario);
     const intervaloReserva = dto.intervaloReserva ?? n.intervaloReserva;
     const reservasActivas = dto.reservasActivas ?? n.reservasActivas;
     this.assertReservasConfig(reservasActivas, intervaloReserva, horario);
+    if (dto.horario !== undefined) {
+      this.logHorarioDebug('actualizar-negocio horario recibido', dto.horario, {
+        negocioId: id,
+        provided: true,
+        intervaloReserva,
+        reservasActivas,
+      });
+    }
 
     const data: any = {
       ...(dto.nombre !== undefined ? { nombre: dto.nombre.trim() } : {}),
@@ -731,6 +785,18 @@ export class NegocioService {
         n.duenoId,
         'HORARIO_NEGOCIO_CONFIGURADO',
         id,
+      );
+    }
+
+    if (dto.horario !== undefined) {
+      this.logHorarioDebug(
+        'actualizar-negocio horario guardado',
+        negocio.horario,
+        {
+          negocioId: negocio.id,
+          intervaloReserva: negocio.intervaloReserva,
+          reservasActivas: negocio.reservasActivas,
+        },
       );
     }
 
@@ -851,10 +917,16 @@ export class NegocioService {
     const horario =
       dto.horario !== undefined
         ? this.normalizeHorarioPayload(dto.horario)
-        : (n.horario as HorarioJson | null);
+        : this.cleanHorarioForResponse(n.horario);
     const intervaloReserva = dto.intervaloReserva ?? n.intervaloReserva;
     const reservasActivas = dto.reservasActivas ?? n.reservasActivas;
     this.assertReservasConfig(reservasActivas, intervaloReserva, horario);
+    this.logHorarioDebug('horario-negocio horario recibido', dto.horario, {
+      negocioId: id,
+      provided: dto.horario !== undefined,
+      intervaloReserva,
+      reservasActivas,
+    });
 
     const negocio = await this.prisma.negocio.update({
       where: { id },
@@ -890,9 +962,17 @@ export class NegocioService {
       );
     }
 
+    const horarioResponse = this.cleanHorarioForResponse(negocio.horario);
+
+    this.logHorarioDebug('horario-negocio horario guardado', horarioResponse, {
+      negocioId: negocio.id,
+      intervaloReserva: negocio.intervaloReserva,
+      reservasActivas: negocio.reservasActivas,
+    });
+
     return {
       ...negocio,
-      horario: this.cleanHorarioForResponse(negocio.horario),
+      horario: horarioResponse,
     };
   }
 
@@ -909,9 +989,17 @@ export class NegocioService {
       },
     });
     if (!neg) throw new NotFoundException('Negocio no encontrado');
+    const horario = this.cleanHorarioForResponse(neg.horario);
+
+    this.logHorarioDebug('get-horario horario devuelto', horario, {
+      negocioId: neg.id,
+      intervaloReserva: neg.intervaloReserva,
+      reservasActivas: neg.reservasActivas,
+    });
+
     return {
       ...neg,
-      horario: this.cleanHorarioForResponse(neg.horario),
+      horario,
     };
   }
 

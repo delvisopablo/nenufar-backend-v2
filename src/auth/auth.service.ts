@@ -23,7 +23,13 @@ import {
   generateUniqueNegocioSlug,
   slugifyNegocioNombre,
 } from '../negocio/negocio-slug.util';
-import { hasOpenDays, HorarioJson } from '../negocio/horario.util';
+import {
+  hasOpenDays,
+  HorarioJson,
+  normalizeHorarioForRead,
+  normalizeHorarioInput,
+  summarizeHorarioForLog,
+} from '../negocio/horario.util';
 import { NenufarizarService } from '../nenufarizar/nenufarizar.service';
 import { AppError } from '../common/errors/app-error';
 
@@ -230,6 +236,68 @@ export class AuthService {
     private emailService: EmailService,
     private readonly nenufarizarService: NenufarizarService,
   ) {}
+
+  private normalizeHorarioPayload(horario: unknown) {
+    if (horario === undefined) {
+      return undefined;
+    }
+
+    return normalizeHorarioInput(horario);
+  }
+
+  private toPrismaHorarioValue(horario: HorarioJson | null) {
+    return horario === null
+      ? Prisma.JsonNull
+      : (horario as Prisma.InputJsonValue);
+  }
+
+  private cleanHorarioForResponse(horario: unknown) {
+    return normalizeHorarioForRead(horario);
+  }
+
+  private assertReservasConfig(
+    reservasActivas: boolean,
+    intervaloReserva?: number | null,
+    horario?: HorarioJson | null,
+  ) {
+    if (!reservasActivas) {
+      return;
+    }
+
+    if (!intervaloReserva || intervaloReserva <= 0) {
+      throw new BadRequestException(
+        'Si las reservas estan activas, intervaloReserva debe ser positivo',
+      );
+    }
+
+    if (!horario || !hasOpenDays(horario)) {
+      throw new BadRequestException(
+        'Si las reservas estan activas, debe haber al menos un dia abierto',
+      );
+    }
+  }
+
+  private logHorarioDebug(
+    action: string,
+    horario: unknown,
+    options: {
+      negocioId?: number;
+      provided?: boolean;
+      intervaloReserva?: number | null;
+      reservasActivas?: boolean;
+    } = {},
+  ) {
+    if (
+      process.env.NODE_ENV === 'production' ||
+      process.env.NODE_ENV === 'test'
+    ) {
+      return;
+    }
+
+    this.logger.debug(
+      `[${action}] horario negocioId=${options.negocioId ?? 'pending'} provided=${String(options.provided ?? true)} ${summarizeHorarioForLog(horario)} intervaloReserva=${options.intervaloReserva ?? 'null'} reservasActivas=${String(options.reservasActivas ?? false)}`,
+    );
+  }
 
   private getCookieBaseOptions(): CookieOptions {
     const isProd = process.env.NODE_ENV === 'production';
@@ -612,15 +680,12 @@ export class AuthService {
 
   private toPublicAuthUser(user: AuthUserRecord) {
     const negocioRecord = user.negocios[0] ?? null;
+    const horario = this.cleanHorarioForResponse(negocioRecord?.horario);
     const negocio = negocioRecord
       ? {
           ...negocioRecord,
           nickname: negocioRecord.slug ?? null,
-          horario:
-            negocioRecord.horario &&
-            hasOpenDays(negocioRecord.horario as HorarioJson)
-              ? negocioRecord.horario
-              : null,
+          horario,
           nenufarActivo:
             negocioRecord.nenufarActivo ?? negocioRecord.nenufarAsset ?? null,
           // TODO: cuando exista saldo propio de Negocio, reemplazar este fallback al saldo del dueño.
@@ -630,12 +695,21 @@ export class AuthService {
         }
       : null;
 
+    if (negocioRecord) {
+      this.logHorarioDebug('auth/me horario devuelto', horario, {
+        negocioId: negocioRecord.id,
+        intervaloReserva: negocioRecord.intervaloReserva,
+        reservasActivas: negocioRecord.reservasActivas,
+      });
+    }
+
     return {
       id: user.id,
       nombre: user.nombre,
       nickname: user.nickname,
       email: user.email,
       foto: user.foto,
+      fotoPerfil: user.foto,
       foto_perfil: user.foto,
       biografia: user.biografia,
       creadoEn: user.creadoEn,
@@ -850,7 +924,9 @@ export class AuthService {
     const normalizedHistoria = normalizeOptionalString(
       dto.historia ?? dto.descripcion ?? dto.biografia,
     );
-    const normalizedDescripcionCorta = normalizeOptionalString(dto.descripcionCorta);
+    const normalizedDescripcionCorta = normalizeOptionalString(
+      dto.descripcionCorta,
+    );
     const normalizedNenufarActivo = normalizeOptionalString(
       dto.nenufarActivo ?? dto.nenufarAsset,
     );
@@ -865,6 +941,21 @@ export class AuthService {
     if (dto.fechaFundacion && Number.isNaN(fechaFundacion.getTime())) {
       throw new BadRequestException('La fecha de fundación no es válida');
     }
+
+    const horario = this.normalizeHorarioPayload(dto.horario);
+    const horarioPersistible = horario && hasOpenDays(horario) ? horario : null;
+    const reservasActivas = dto.reservasActivas ?? false;
+
+    this.assertReservasConfig(
+      reservasActivas,
+      dto.intervaloReserva,
+      horario ?? null,
+    );
+    this.logHorarioDebug('registro-negocio horario recibido', dto.horario, {
+      provided: dto.horario !== undefined,
+      intervaloReserva: dto.intervaloReserva,
+      reservasActivas,
+    });
 
     // Verificar email y nickname por separado para códigos de error específicos
     const emailExists = await this.prisma.usuario.findUnique({
@@ -978,19 +1069,22 @@ export class AuthService {
               nombre: normalizedBusinessName,
               slug: negocioSlug,
               historia: normalizedHistoria,
-              ...(normalizedDescripcionCorta ? { descripcionCorta: normalizedDescripcionCorta } : {}),
+              ...(normalizedDescripcionCorta
+                ? { descripcionCorta: normalizedDescripcionCorta }
+                : {}),
               direccion: normalizedDireccion,
               fechaFundacion,
               categoriaId: dto.categoriaId,
               ...(dto.subcategoriaId
                 ? { subcategoriaId: dto.subcategoriaId }
                 : {}),
-              ...(dto.horario
-                ? { horario: dto.horario as Prisma.InputJsonValue }
+              ...(dto.horario !== undefined
+                ? { horario: this.toPrismaHorarioValue(horarioPersistible) }
                 : {}),
-              ...(dto.intervaloReserva
+              ...(dto.intervaloReserva !== undefined
                 ? { intervaloReserva: dto.intervaloReserva }
                 : {}),
+              reservasActivas,
               ...(normalizedNenufarActivo
                 ? {
                     nenufarActivo: normalizedNenufarActivo,
@@ -1032,6 +1126,16 @@ export class AuthService {
         },
       );
 
+      this.logHorarioDebug(
+        'registro-negocio horario guardado',
+        result.negocio.horario,
+        {
+          negocioId: result.negocio.id,
+          intervaloReserva: result.negocio.intervaloReserva,
+          reservasActivas: result.negocio.reservasActivas,
+        },
+      );
+
       const tokens = await this.signTokens({
         id: result.user.id,
         email: result.user.email,
@@ -1055,6 +1159,7 @@ export class AuthService {
           rol: 'negocio',
           negocio: {
             ...result.negocio,
+            horario: this.cleanHorarioForResponse(result.negocio.horario),
             nenufarActivo:
               result.negocio.nenufarActivo ?? result.negocio.nenufarAsset,
           },

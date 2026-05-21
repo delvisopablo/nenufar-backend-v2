@@ -5,7 +5,7 @@ export class ConfigHorarioDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
-  @Min(5)
+  @Min(1)
   intervaloReserva?: number; // minutos
 
   @IsOptional()

@@ -13,16 +13,14 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { DashboardRangeDto } from './dto/dashboard-range.dto';
-import { hasOpenDays, HorarioJson } from '../negocio/horario.util';
+import { normalizeHorarioForRead } from '../negocio/horario.util';
 
 function decimalToNumber(value?: Prisma.Decimal | null) {
   if (!value) return 0;
   return Number(value.toString());
 }
 
-function groupCount(
-  value?: true | { id?: number; _all?: number } | null,
-) {
+function groupCount(value?: true | { id?: number; _all?: number } | null) {
   if (value && typeof value === 'object') {
     return value.id ?? value._all ?? 0;
   }
@@ -63,7 +61,14 @@ export class DashboardService {
     const [negocio, actor, miembro] = await this.prisma.$transaction([
       this.prisma.negocio.findUnique({
         where: { id: negocioId },
-        select: { id: true, duenoId: true, nombre: true },
+        select: {
+          id: true,
+          duenoId: true,
+          nombre: true,
+          horario: true,
+          intervaloReserva: true,
+          reservasActivas: true,
+        },
       }),
       this.prisma.usuario.findUnique({
         where: { id: actorUserId },
@@ -89,7 +94,9 @@ export class DashboardService {
       actor.rolGlobal !== RolGlobal.ADMIN &&
       actor.rolGlobal !== RolGlobal.MODERADOR
     ) {
-      throw new ForbiddenException('No tienes permisos para ver este dashboard');
+      throw new ForbiddenException(
+        'No tienes permisos para ver este dashboard',
+      );
     }
 
     return negocio;
@@ -155,7 +162,13 @@ export class DashboardService {
     const comprasCompletadas = ventas._count._all;
 
     return {
-      negocio: { id: negocio.id, nombre: negocio.nombre },
+      negocio: {
+        id: negocio.id,
+        nombre: negocio.nombre,
+        horario: normalizeHorarioForRead(negocio.horario),
+        intervaloReserva: negocio.intervaloReserva,
+        reservasActivas: negocio.reservasActivas,
+      },
       periodo: {
         from: period.from.toISOString(),
         to: period.to.toISOString(),
@@ -396,10 +409,7 @@ export class DashboardService {
       conteo[item.estado] = groupCount(item._count);
     }
 
-    const horario =
-      negocio.horario && hasOpenDays(negocio.horario as HorarioJson)
-        ? negocio.horario
-        : null;
+    const horario = normalizeHorarioForRead(negocio.horario);
 
     return {
       periodo: {
@@ -573,7 +583,12 @@ export class DashboardService {
     const topCompradoresMap = new Map<
       number,
       {
-        usuario: { id: number; nombre: string; nickname: string; email: string };
+        usuario: {
+          id: number;
+          nombre: string;
+          nickname: string;
+          email: string;
+        };
         totalGastado: number;
         compras: number;
       }
@@ -598,7 +613,8 @@ export class DashboardService {
       },
       resumen: {
         compradoresUnicos: topCompradoresMap.size,
-        reservadoresUnicos: new Set(reservas.map((item) => item.usuarioId)).size,
+        reservadoresUnicos: new Set(reservas.map((item) => item.usuarioId))
+          .size,
         visitantesAutenticadosUnicos: new Set(
           visitas.map((item) => item.usuarioId).filter(Boolean),
         ).size,

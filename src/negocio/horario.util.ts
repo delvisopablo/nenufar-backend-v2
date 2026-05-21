@@ -99,7 +99,9 @@ function normalizeRangeParts(
   }
 
   if (toMinutes(start) >= toMinutes(end)) {
-    throw new BadRequestException(`${label} debe tener apertura menor que cierre`);
+    throw new BadRequestException(
+      `${label} debe tener apertura menor que cierre`,
+    );
   }
 
   return [start, end];
@@ -172,7 +174,9 @@ function normalizeLegacyHorario(input: Record<string, unknown>): HorarioJson {
     for (const [rawDay, rawRanges] of Object.entries(input.weekly)) {
       const dayKey = normalizeDayToken(rawDay);
       if (!dayKey) {
-        throw new BadRequestException(`Dia invalido en horario.weekly: ${rawDay}`);
+        throw new BadRequestException(
+          `Dia invalido en horario.weekly: ${rawDay}`,
+        );
       }
 
       weekly[dayKey] = normalizeRanges(rawRanges, `horario.weekly.${rawDay}`);
@@ -242,9 +246,7 @@ function normalizeStructuredDay(
       );
     }
 
-    return [
-      normalizeRangeParts(rawDay.apertura, rawDay.cierre, dayLabel),
-    ];
+    return [normalizeRangeParts(rawDay.apertura, rawDay.cierre, dayLabel)];
   }
 
   if (abierto === true) {
@@ -312,6 +314,42 @@ export function hasOpenDays(horario?: HorarioJson | null) {
   }
 
   return Boolean(horario.apertura && horario.cierre);
+}
+
+export function normalizeHorarioForRead(
+  rawHorario: unknown,
+): HorarioJson | null {
+  if (rawHorario === null || rawHorario === undefined) {
+    return null;
+  }
+
+  try {
+    const horario = normalizeHorarioInput(rawHorario);
+    return horario && hasOpenDays(horario) ? horario : null;
+  } catch {
+    return null;
+  }
+}
+
+export function summarizeHorarioForLog(rawHorario: unknown) {
+  const horario = normalizeHorarioForRead(rawHorario);
+  if (!horario) {
+    return 'configured=false openDays=0 exceptions=0';
+  }
+
+  const openDays = horario.weekly
+    ? HORARIO_DAY_KEYS.filter((dayKey) => {
+        const ranges = horario.weekly?.[dayKey];
+        return Array.isArray(ranges) && ranges.length > 0;
+      }).length
+    : horario.apertura && horario.cierre
+      ? 1
+      : 0;
+  const exceptions = horario.exceptions
+    ? Object.keys(horario.exceptions).length
+    : 0;
+
+  return `configured=true openDays=${openDays} exceptions=${exceptions}`;
 }
 
 function dayKeyFromDate(date: Date): HorarioDayKey {

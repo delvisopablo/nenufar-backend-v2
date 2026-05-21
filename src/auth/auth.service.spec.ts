@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 
 import {
+  BadRequestException,
   ConflictException,
   Logger,
   UnauthorizedException,
@@ -203,15 +204,17 @@ describe('AuthService', () => {
     );
     expect(res.cookie).toHaveBeenCalledTimes(2);
     expect(nenufarizarService.procesarReferido).not.toHaveBeenCalled();
-    expect(result).toEqual(expect.objectContaining({
-      access_token: 'access-token',
-      usuario: expect.objectContaining({
-        id: 7,
-        nombre: 'Ada',
-        nickname: 'ada',
-        email: 'ada@example.com',
+    expect(result).toEqual(
+      expect.objectContaining({
+        access_token: 'access-token',
+        usuario: expect.objectContaining({
+          id: 7,
+          nombre: 'Ada',
+          nickname: 'ada',
+          email: 'ada@example.com',
+        }),
       }),
-    }));
+    );
   });
 
   it('register traduce P2002 a 409', async () => {
@@ -305,13 +308,15 @@ describe('AuthService', () => {
       { cookie: jest.fn() } as any,
     );
 
-    expect(result).toEqual(expect.objectContaining({
-      access_token: 'access-token',
-      usuario: expect.objectContaining({
-        id: 7,
-        nombre: 'Ada',
+    expect(result).toEqual(
+      expect.objectContaining({
+        access_token: 'access-token',
+        usuario: expect.objectContaining({
+          id: 7,
+          nombre: 'Ada',
+        }),
       }),
-    }));
+    );
     expect(nenufarizarService.procesarReferido).toHaveBeenCalledWith(
       7,
       'FAIL01',
@@ -456,6 +461,107 @@ describe('AuthService', () => {
         },
       },
     });
+  });
+
+  it('registerNegocio normaliza y guarda horario, intervalo y reservas activas', async () => {
+    prisma.usuario.findUnique.mockResolvedValue(null);
+    prisma.usuario.findFirst.mockResolvedValue(null);
+    prisma.categoria.findUnique.mockResolvedValue({ id: 3 });
+    prisma.negocio.findUnique.mockResolvedValue(null);
+    prisma.usuario.create.mockResolvedValue({
+      id: 11,
+      nombre: 'Pablo',
+      nickname: 'pablo',
+      email: 'pablo@example.com',
+      rolGlobal: RolGlobal.USUARIO,
+    });
+    prisma.negocio.create.mockResolvedValue({
+      id: 25,
+      nombre: 'Cafe Nenufar',
+      slug: 'cafe-nenufar',
+      horario: {
+        weekly: {
+          mon: [['10:00', '20:00']],
+          tue: [['10:00', '20:00']],
+          wed: [],
+          thu: [],
+          fri: [],
+          sat: [['10:00', '14:00']],
+          sun: [],
+        },
+      },
+      intervaloReserva: 30,
+      reservasActivas: true,
+      nenufarColor: null,
+      nenufarActivo: null,
+      nenufarAsset: null,
+    });
+    prisma.negocioMiembro.create.mockResolvedValue({});
+    jwtService.signAsync
+      .mockResolvedValueOnce('business-access-token')
+      .mockResolvedValueOnce('business-refresh-token');
+
+    await service.registerNegocio(
+      {
+        nombreDueno: 'Pablo',
+        nickname: 'pablo',
+        email: 'pablo@example.com',
+        password: 'secret123',
+        nombreNegocio: 'Cafe Nenufar',
+        categoriaId: 3,
+        horario: {
+          lunes: { abierto: true, apertura: '10:00', cierre: '20:00' },
+          martes: { abierto: true, apertura: '10:00', cierre: '20:00' },
+          sabado: { abierto: true, apertura: '10:00', cierre: '14:00' },
+          domingo: { abierto: false },
+        },
+        intervaloReserva: 30,
+        reservasActivas: true,
+      },
+      { cookie: jest.fn() } as any,
+    );
+
+    expect(prisma.negocio.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        horario: {
+          weekly: {
+            mon: [['10:00', '20:00']],
+            tue: [['10:00', '20:00']],
+            wed: [],
+            thu: [],
+            fri: [],
+            sat: [['10:00', '14:00']],
+            sun: [],
+          },
+        },
+        intervaloReserva: 30,
+        reservasActivas: true,
+      }),
+      select: expect.any(Object),
+    });
+  });
+
+  it('registerNegocio rechaza reservas activas sin dias abiertos', async () => {
+    await expect(
+      service.registerNegocio(
+        {
+          nombreDueno: 'Pablo',
+          nickname: 'pablo',
+          email: 'pablo@example.com',
+          password: 'secret123',
+          nombreNegocio: 'Cafe Nenufar',
+          categoriaId: 3,
+          horario: {
+            domingo: { abierto: false },
+          },
+          intervaloReserva: 30,
+          reservasActivas: true,
+        },
+        { cookie: jest.fn() } as any,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.negocio.create).not.toHaveBeenCalled();
   });
 
   it('registerNegocio devuelve error claro cuando el código de nenufarización es inválido', async () => {

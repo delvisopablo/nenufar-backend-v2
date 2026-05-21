@@ -55,6 +55,7 @@ export class UsuarioService {
   private toPublicUserResponse(user: PublicUserRecord) {
     return {
       ...user,
+      fotoPerfil: user.foto,
       foto_perfil: user.foto,
       petalosBalance: user.petalosSaldo,
     };
@@ -176,6 +177,7 @@ export class UsuarioService {
     if (!usuario) throw new NotFoundException('Usuario no encontrado');
     return {
       ...usuario,
+      fotoPerfil: usuario.foto,
       foto_perfil: usuario.foto,
       petalosBalance: usuario.petalosSaldo,
       resenas: usuario.resenas.map((resena) => mapResenaPublic(resena)),
@@ -232,6 +234,7 @@ export class UsuarioService {
 
     return {
       ...usuario,
+      fotoPerfil: usuario.foto,
       foto_perfil: usuario.foto,
       petalosBalance: usuario.petalosSaldo,
       resenas: usuario.resenas.map((resena) => mapResenaPublic(resena)),
@@ -301,6 +304,23 @@ export class UsuarioService {
       }
       throw error;
     }
+  }
+
+  async actualizarFotoPerfil(id: number, fotoUrl: string) {
+    const usuario = await this.prisma.usuario.update({
+      where: { id },
+      data: { foto: normalizeOptionalString(fotoUrl) },
+      select: publicUserSelect,
+    });
+
+    void this.logroEngine
+      ?.registrarAccion({
+        usuarioId: usuario.id,
+        accion: 'PERFIL_COMPLETADO',
+      })
+      .catch(() => undefined);
+
+    return this.toPublicUserResponse(usuario);
   }
 
   async getSeguidores(id: number, actorUserId?: number) {

@@ -7,7 +7,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificacionService } from '../notificacion/notificacion.service';
-import { hasOpenDays, HorarioJson } from '../negocio/horario.util';
+import { normalizeHorarioForRead } from '../negocio/horario.util';
 import { AccionLogro } from './logro-accion';
 
 type RegistrarAccionOpts = {
@@ -354,7 +354,7 @@ export class LogroEngineService {
           select: { horario: true },
         });
         return negocios.filter((negocio) =>
-          hasOpenDays(negocio.horario as HorarioJson | null),
+          Boolean(normalizeHorarioForRead(negocio.horario)),
         ).length;
       }
 

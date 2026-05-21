@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { hasOpenDays, HorarioJson } from './horario.util';
+import { normalizeHorarioForRead } from './horario.util';
 
 export const negocioPublicSelect = {
   id: true,
@@ -45,10 +45,7 @@ export function mapNegocioPublic(negocio: NegocioPublic | null | undefined) {
     ...negocio,
     // `slug` es el handle público disponible hoy para negocio.
     nickname: negocio.slug ?? null,
-    horario:
-      negocio.horario && hasOpenDays(negocio.horario as HorarioJson)
-        ? negocio.horario
-        : null,
+    horario: normalizeHorarioForRead(negocio.horario),
     nenufarActivo:
       negocio.nenufarActivo ??
       negocio.nenufarAsset ??

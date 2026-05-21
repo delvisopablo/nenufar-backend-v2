@@ -220,6 +220,81 @@ describe('NegocioService', () => {
     );
   });
 
+  it('getBySlug devuelve horario normalizado aunque estuviera guardado con dias del frontend', async () => {
+    prisma.negocio.findFirst.mockResolvedValue({
+      id: 44,
+      nombre: 'Peluqueria Pocos Pelos',
+      slug: 'peluqueria-pocos-pelos',
+      historia: null,
+      descripcionCorta: null,
+      fechaFundacion: new Date('2020-01-01T00:00:00.000Z'),
+      direccion: 'Calle Mayor 1',
+      ciudad: 'Oviedo',
+      codigoPostal: null,
+      provincia: 'Asturias',
+      latitud: null,
+      longitud: null,
+      fotoPerfil: null,
+      fotoPortada: null,
+      nenufarColor: null,
+      nenufarActivo: null,
+      nenufarKey: null,
+      nenufarAsset: null,
+      telefono: null,
+      emailContacto: null,
+      web: null,
+      instagram: null,
+      verificado: true,
+      activo: true,
+      horario: {
+        lunes: { abierto: true, apertura: '10:00', cierre: '20:00' },
+        domingo: { abierto: false },
+      },
+      intervaloReserva: 30,
+      reservasActivas: true,
+      categoria: { id: 1, nombre: 'Belleza' },
+      subcategoria: null,
+      duenoId: 9,
+      dueno: {
+        id: 9,
+        nombre: 'Ana',
+        nickname: 'ana-pocos-pelos',
+        foto: null,
+        petalosSaldo: 0,
+      },
+      _count: {
+        seguidores: 3,
+        resenas: 4,
+        productos: 0,
+        reservas: 0,
+      },
+    });
+    prisma.resena.aggregate.mockResolvedValue({
+      _avg: { puntuacion: 4.5 },
+      _count: { id: 4 },
+    });
+
+    const result = await service.getBySlug('peluqueria-pocos-pelos');
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        horario: {
+          weekly: {
+            mon: [['10:00', '20:00']],
+            tue: [],
+            wed: [],
+            thu: [],
+            fri: [],
+            sat: [],
+            sun: [],
+          },
+        },
+        intervaloReserva: 30,
+        reservasActivas: true,
+      }),
+    );
+  });
+
   it('setConfigHorario normaliza el horario semanal del frontend', async () => {
     prisma.negocio.findUnique.mockResolvedValue({
       duenoId: 9,

@@ -1,6 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsDateString,
   IsEmail,
   IsInt,
@@ -212,15 +213,23 @@ export class RegisterNegocioDto {
   })
   @IsOptional()
   @IsObject()
-  horario?: Record<string, unknown>;
+  horario?: Record<string, unknown> | null;
 
   @ApiPropertyOptional({
     example: 30,
-    description: 'Intervalo de reserva en minutos (mín. 5).',
+    description: 'Intervalo de reserva en minutos.',
   })
   @Type(() => Number)
   @IsOptional()
   @IsInt()
-  @Min(5)
+  @Min(1)
   intervaloReserva?: number;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Indica si el negocio acepta reservas.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  reservasActivas?: boolean;
 }

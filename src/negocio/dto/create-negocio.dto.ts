@@ -48,7 +48,7 @@ export class CreateNegocioDto {
 
   @IsInt()
   @IsOptional()
-  @Min(5)
+  @Min(1)
   intervaloReserva?: number;
 
   @IsOptional()
