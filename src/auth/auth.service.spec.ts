@@ -860,6 +860,84 @@ describe('AuthService', () => {
     );
   });
 
+  it('login con rememberMe true usa el TTL largo del refresh token', async () => {
+    process.env.JWT_REFRESH_TTL = '1d';
+    process.env.JWT_REFRESH_REMEMBER_TTL = '30d';
+    emailService.isEnabled.mockReturnValue(false);
+    prisma.usuario.findUnique
+      .mockResolvedValueOnce({
+        id: 7,
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        password: await bcrypt.hash('secret123', 10),
+        foto: null,
+        biografia: null,
+        creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+        actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+        emailVerificado: true,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        rolGlobal: RolGlobal.USUARIO,
+        petalosSaldo: 0,
+        negocios: [],
+      })
+      .mockResolvedValueOnce({
+        id: 7,
+        nombre: 'Ada',
+        nickname: 'ada',
+        email: 'ada@example.com',
+        foto: null,
+        biografia: null,
+        creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+        actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+        emailVerificado: true,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        rolGlobal: RolGlobal.USUARIO,
+        petalosSaldo: 0,
+        negocios: [],
+      });
+    prisma.usuario.update.mockResolvedValue({});
+    jwtService.signAsync
+      .mockResolvedValueOnce('access-token')
+      .mockResolvedValueOnce('refresh-token');
+
+    const res = {
+      cookie: jest.fn(),
+    } as any;
+
+    await service.login(
+      {
+        email: 'ada@example.com',
+        password: 'secret123',
+        rememberMe: true,
+      },
+      res,
+    );
+
+    expect(jwtService.signAsync).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ sub: 7, rememberMe: true }),
+      { secret: 'test-access-secret', expiresIn: 15 * 60 },
+    );
+    expect(jwtService.signAsync).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ sub: 7, rememberMe: true }),
+      { secret: 'test-refresh-secret', expiresIn: 30 * 24 * 60 * 60 },
+    );
+    expect(res.cookie).toHaveBeenNthCalledWith(
+      2,
+      'refresh_token',
+      'refresh-token',
+      expect.objectContaining({
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+      }),
+    );
+  });
+
   it('login no reenvía el welcome email si ya fue enviado', async () => {
     prisma.usuario.findUnique
       .mockResolvedValueOnce({
@@ -1150,6 +1228,57 @@ describe('AuthService', () => {
     expect(result).toEqual({ ok: true });
   });
 
+  it('refresh conserva el TTL largo cuando el refresh token venía de rememberMe', async () => {
+    process.env.JWT_REFRESH_TTL = '1d';
+    process.env.JWT_REFRESH_REMEMBER_TTL = '30d';
+    jwtService.verifyAsync.mockResolvedValue({
+      sub: 12,
+      email: 'ada@example.com',
+      nickname: 'ada',
+      rolGlobal: RolGlobal.USUARIO,
+      rememberMe: true,
+    });
+    prisma.usuario.findUnique.mockResolvedValue({
+      id: 12,
+      email: 'ada@example.com',
+      nickname: 'ada',
+      rolGlobal: RolGlobal.USUARIO,
+      estadoCuenta: EstadoCuenta.ACTIVA,
+      eliminadoEn: null,
+    });
+    jwtService.signAsync
+      .mockResolvedValueOnce('new-access-token')
+      .mockResolvedValueOnce('new-refresh-token');
+
+    const res = {
+      cookie: jest.fn(),
+    } as any;
+
+    await service.refresh(
+      {
+        cookies: {
+          refresh_token: 'incoming-refresh-token',
+        },
+        headers: {},
+      } as any,
+      res,
+    );
+
+    expect(jwtService.signAsync).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ sub: 12, rememberMe: true }),
+      { secret: 'test-refresh-secret', expiresIn: 30 * 24 * 60 * 60 },
+    );
+    expect(res.cookie).toHaveBeenNthCalledWith(
+      2,
+      'refresh_token',
+      'new-refresh-token',
+      expect.objectContaining({
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+      }),
+    );
+  });
+
   it('logout limpia cookies con las mismas opciones cross-site de producción', () => {
     process.env.NODE_ENV = 'production';
     process.env.COOKIE_DOMAIN = '.minenufar.com';
@@ -1235,6 +1364,89 @@ describe('AuthService', () => {
         email: 'demo@example.com',
         biografia: 'Hola',
         foto_perfil: 'avatar.png',
+      }),
+    );
+  });
+
+  it('me usa refresh_token y rota cookies cuando el access_token ya no es válido', async () => {
+    process.env.JWT_REFRESH_TTL = '1d';
+    process.env.JWT_REFRESH_REMEMBER_TTL = '30d';
+    jwtService.verifyAsync
+      .mockRejectedValueOnce(new Error('jwt expired'))
+      .mockResolvedValueOnce({
+        sub: 9,
+        email: 'demo@example.com',
+        nickname: 'demo',
+        rolGlobal: RolGlobal.USUARIO,
+        rememberMe: true,
+      });
+    jwtService.signAsync
+      .mockResolvedValueOnce('rotated-access-token')
+      .mockResolvedValueOnce('rotated-refresh-token');
+    prisma.usuario.findUnique
+      .mockResolvedValueOnce({
+        id: 9,
+        email: 'demo@example.com',
+        nickname: 'demo',
+        rolGlobal: RolGlobal.USUARIO,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        eliminadoEn: null,
+      })
+      .mockResolvedValueOnce({
+        id: 9,
+        nombre: 'Negocio Demo',
+        nickname: 'demo',
+        email: 'demo@example.com',
+        foto: 'avatar.png',
+        biografia: 'Hola',
+        creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+        actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+        emailVerificado: true,
+        estadoCuenta: EstadoCuenta.ACTIVA,
+        eliminadoEn: null,
+        rolGlobal: RolGlobal.USUARIO,
+        petalosSaldo: 8,
+        negocios: [],
+      });
+
+    const res = {
+      cookie: jest.fn(),
+      clearCookie: jest.fn(),
+    } as any;
+
+    const result = await service.me(
+      {
+        cookies: {
+          access_token: 'expired-access-token',
+          refresh_token: 'valid-refresh-token',
+        },
+        headers: {},
+      } as any,
+      res,
+    );
+
+    expect(jwtService.verifyAsync).toHaveBeenNthCalledWith(
+      1,
+      'expired-access-token',
+      { secret: 'test-access-secret' },
+    );
+    expect(jwtService.verifyAsync).toHaveBeenNthCalledWith(
+      2,
+      'valid-refresh-token',
+      { secret: 'test-refresh-secret' },
+    );
+    expect(res.cookie).toHaveBeenNthCalledWith(
+      2,
+      'refresh_token',
+      'rotated-refresh-token',
+      expect.objectContaining({
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 9,
+        email: 'demo@example.com',
       }),
     );
   });

@@ -22,6 +22,11 @@ import { join } from 'path';
 import { UsuarioService } from './usuario.service';
 import { CreateUsuarioDto } from './dto/create-usuario.dto';
 import { UpdateUsuarioDto } from './dto/update-usuario.dto';
+import { FavoritosService } from './favoritos.service';
+import { NenulistaService } from './nenulista.service';
+import { AddProductoFavoritoDto } from './dto/add-producto-favorito.dto';
+import { AddListaCompraItemDto } from './dto/add-lista-compra-item.dto';
+import { UpdateListaCompraItemDto } from './dto/update-lista-compra-item.dto';
 
 const MAX_PROFILE_PHOTO_SIZE = 3 * 1024 * 1024;
 const profilePhotoExtensions: Record<string, string> = {
@@ -47,7 +52,11 @@ type AuthenticatedRequest = Request & {
 @ApiTags('Usuario')
 @Controller('usuario')
 export class UsuarioController {
-  constructor(private readonly usuarioService: UsuarioService) {}
+  constructor(
+    private readonly usuarioService: UsuarioService,
+    private readonly favoritosService: FavoritosService,
+    private readonly nenulistaService: NenulistaService,
+  ) {}
 
   private getAuthenticatedUserId(req: { user?: { id?: number } }) {
     const userId = Number(req.user?.id);
@@ -101,6 +110,72 @@ export class UsuarioController {
     );
 
     return { ok: true, usuario };
+  }
+
+  // ===== FAVORITOS =====
+  @Get('me/productos-favoritos')
+  async getFavoritos(@Req() req: AuthenticatedRequest) {
+    const userId = this.getAuthenticatedUserId(req);
+    return this.favoritosService.getFavoritos(userId);
+  }
+
+  @Post('me/productos-favoritos')
+  async addFavorito(
+    @Body() dto: AddProductoFavoritoDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const userId = this.getAuthenticatedUserId(req);
+    return this.favoritosService.addFavorito(userId, dto.productoId);
+  }
+
+  @Delete('me/productos-favoritos/:productoId')
+  async deleteFavorito(
+    @Param('productoId', ParseIntPipe) productoId: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const userId = this.getAuthenticatedUserId(req);
+    return this.favoritosService.deleteFavorito(userId, productoId);
+  }
+
+  // ===== NENULISTA (Lista de la compra) =====
+  @Get('me/lista-compra')
+  async getNenulista(@Req() req: AuthenticatedRequest) {
+    const userId = this.getAuthenticatedUserId(req);
+    return this.nenulistaService.getNenulista(userId);
+  }
+
+  @Post('me/lista-compra')
+  async addListaCompraItem(
+    @Body() dto: AddListaCompraItemDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const userId = this.getAuthenticatedUserId(req);
+    return this.nenulistaService.addProducto(userId, dto);
+  }
+
+  @Patch('me/lista-compra/:itemId')
+  async updateListaCompraItem(
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body() dto: UpdateListaCompraItemDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const userId = this.getAuthenticatedUserId(req);
+    return this.nenulistaService.updateItem(userId, itemId, dto);
+  }
+
+  @Delete('me/lista-compra/:itemId')
+  async deleteListaCompraItem(
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const userId = this.getAuthenticatedUserId(req);
+    return this.nenulistaService.deleteItem(userId, itemId);
+  }
+
+  @Delete('me/lista-compra/completados')
+  async clearCompletados(@Req() req: AuthenticatedRequest) {
+    const userId = this.getAuthenticatedUserId(req);
+    return this.nenulistaService.clearCompletados(userId);
   }
 
   @Get('by-nickname/:nickname')

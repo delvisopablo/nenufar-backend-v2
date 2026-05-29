@@ -198,6 +198,8 @@ model Usuario {
   solicitudesProductoCatalogo SolicitudProductoCatalogo[]
   notificaciones    Notificacion[]
   adminLogs         AdminLog[]           @relation("AdminLogsAdmin")
+  productosFavoritos ProductoFavorito[]
+  listasCompra      ListaCompra[]
 
   @@index([estadoCuenta])
   @@index([rolGlobal])
@@ -342,11 +344,56 @@ model Producto {
   solicitudesCatalogo        SolicitudProductoCatalogo[]
   pedidoProductos PedidoProducto[]
   Logro           Logro[]
+  favoritos       ProductoFavorito[]
+  listaCompraItems ListaCompraItem[]
 
   @@index([negocioId])
   @@index([activo])
   @@index([codigoSKU])
   @@index([codigoProducto])
+}
+
+model ProductoFavorito {
+  id         Int      @id @default(autoincrement())
+  usuarioId  Int
+  productoId Int
+  creadoEn   DateTime @default(now())
+
+  usuario  Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  producto Producto @relation(fields: [productoId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, productoId])
+  @@index([productoId])
+}
+
+model ListaCompra {
+  id            Int      @id @default(autoincrement())
+  usuarioId     Int      @unique
+  nombre        String   @default("Mi lista de la compra")
+  creadaEn      DateTime @default(now())
+  actualizadaEn DateTime @updatedAt
+
+  usuario Usuario           @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  items   ListaCompraItem[]
+}
+
+model ListaCompraItem {
+  id            Int      @id @default(autoincrement())
+  listaCompraId Int
+  productoId    Int?
+  nombreManual  String?
+  cantidad      Int      @default(1)
+  completado    Boolean  @default(false)
+  nota          String?
+  creadoEn      DateTime @default(now())
+
+  listaCompra ListaCompra @relation(fields: [listaCompraId], references: [id], onDelete: Cascade)
+  producto    Producto?   @relation(fields: [productoId], references: [id], onDelete: SetNull)
+
+  @@unique([listaCompraId, productoId])
+  @@index([listaCompraId])
+  @@index([productoId])
+  @@index([completado])
 }
 
 model Post {

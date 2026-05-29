@@ -14,8 +14,14 @@ describe('ProductoService', () => {
     };
     producto: {
       create: jest.Mock;
+      findFirst: jest.Mock;
       findUnique: jest.Mock;
       update: jest.Mock;
+    };
+    productoFavorito: {
+      upsert: jest.Mock;
+      findMany: jest.Mock;
+      deleteMany: jest.Mock;
     };
   };
 
@@ -30,19 +36,27 @@ describe('ProductoService', () => {
       },
       producto: {
         create: jest.fn(),
+        findFirst: jest.fn(),
         findUnique: jest.fn(),
         update: jest.fn(),
       },
+      productoFavorito: {
+        upsert: jest.fn(),
+        findMany: jest.fn(),
+        deleteMany: jest.fn(),
+      },
     };
 
-    prisma.$transaction.mockImplementation((callback: (tx: unknown) => unknown) =>
-      Promise.resolve(
-        callback({
-          producto: prisma.producto,
-          negocio: prisma.negocio,
-          usuario: prisma.usuario,
-        }),
-      ),
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: unknown) => unknown) =>
+        Promise.resolve(
+          callback({
+            producto: prisma.producto,
+            productoFavorito: prisma.productoFavorito,
+            negocio: prisma.negocio,
+            usuario: prisma.usuario,
+          }),
+        ),
     );
 
     const module: TestingModule = await Test.createTestingModule({
@@ -160,6 +174,62 @@ describe('ProductoService', () => {
       expect.objectContaining({
         id: 44,
         activo: false,
+      }),
+    );
+  });
+
+  it('marca favoritos con upsert para no duplicar', async () => {
+    const creadoEn = new Date('2026-05-29T11:00:00.000Z');
+    prisma.producto.findFirst.mockResolvedValue({
+      id: 12,
+      negocioId: 3,
+      nombre: 'Corte de pelo',
+      descripcion: 'Corte basico',
+      precio: 10,
+      foto: null,
+      codigoProducto: 'PROD-000012',
+      codigoSKU: null,
+      activo: true,
+      creadoEn,
+      actualizadoEn: creadoEn,
+      eliminadoEn: null,
+      negocio: {
+        id: 3,
+        nombre: 'Peluqueria Nenufar',
+        slug: 'peluqueria-nenufar',
+        duenoId: 7,
+        fotoPerfil: null,
+        fotoPortada: null,
+        nenufarActivo: null,
+        nenufarAsset: null,
+        activo: true,
+      },
+    });
+    prisma.productoFavorito.upsert.mockResolvedValue({ creadoEn });
+
+    const result = await service.addFavorito(12, 7);
+
+    expect(prisma.productoFavorito.upsert).toHaveBeenCalledWith({
+      where: {
+        usuarioId_productoId: {
+          usuarioId: 7,
+          productoId: 12,
+        },
+      },
+      update: {},
+      create: {
+        usuarioId: 7,
+        productoId: 12,
+      },
+      select: { creadoEn: true },
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        favorito: true,
+        producto: expect.objectContaining({
+          id: 12,
+          favorito: true,
+        }),
       }),
     );
   });

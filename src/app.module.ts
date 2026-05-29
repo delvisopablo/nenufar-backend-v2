@@ -31,6 +31,7 @@ import { NotificacionModule } from './notificacion/notificacion.module';
 import { NenufarizarModule } from './nenufarizar/nenufarizar.module';
 import { CodigosNenufarizacionModule } from './codigos-nenufarizacion/codigos-nenufarizacion.module';
 import { AdminModule } from './admin/admin.module';
+import { ListaCompraModule } from './lista-compra/lista-compra.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { AdminModule } from './admin/admin.module';
     NenufarizarModule,
     CodigosNenufarizacionModule,
     AdminModule,
+    ListaCompraModule,
     ConfigModule.forRoot({ isGlobal: true }),
     JwtModule.register({
       secret: process.env.JWT_SECRET,

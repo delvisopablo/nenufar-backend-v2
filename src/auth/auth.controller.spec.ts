@@ -2,12 +2,16 @@ import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { JwtAuthGuard } from './guards/jwt.guard';
 
 describe('AuthController', () => {
   let controller: AuthController;
+  let authService: { me: jest.Mock };
 
   beforeEach(async () => {
+    authService = {
+      me: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
       providers: [
@@ -18,7 +22,7 @@ describe('AuthController', () => {
             login: jest.fn(),
             refresh: jest.fn(),
             logout: jest.fn(),
-            me: jest.fn(),
+            me: authService.me,
           },
         },
       ],
@@ -31,12 +35,18 @@ describe('AuthController', () => {
     expect(controller).toBeDefined();
   });
 
-  it('GET /auth/me usa JwtAuthGuard', () => {
+  it('GET /auth/me delega en AuthService para permitir fallback con refresh cookie', async () => {
     const guards = Reflect.getMetadata(
       GUARDS_METADATA,
       AuthController.prototype.me,
     ) as unknown[] | undefined;
+    const req = { cookies: {} } as any;
+    const res = { cookie: jest.fn(), clearCookie: jest.fn() } as any;
 
-    expect(guards).toContain(JwtAuthGuard);
+    authService.me.mockResolvedValue({ id: 7 });
+
+    await expect(controller.me(req, res)).resolves.toEqual({ id: 7 });
+    expect(guards ?? []).toHaveLength(0);
+    expect(authService.me).toHaveBeenCalledWith(req, res);
   });
 });

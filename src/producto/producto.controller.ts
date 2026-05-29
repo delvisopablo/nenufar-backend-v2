@@ -36,14 +36,26 @@ export class ProductoController {
     return userId;
   }
 
+  private getOptionalUserId(req: { user?: { id?: number } }) {
+    const userId = Number(req.user?.id);
+    return Number.isInteger(userId) && userId > 0 ? userId : undefined;
+  }
+
   @Get('negocios/:id/productos')
   listByNegocio(
     @Param('id', ParseIntPipe) negocioId: number,
     @Query('q') q?: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
+    @Req() req?: any,
   ) {
-    return this.service.listByNegocio(negocioId, q, page, limit);
+    return this.service.listByNegocio(
+      negocioId,
+      q,
+      page,
+      limit,
+      this.getOptionalUserId(req ?? {}),
+    );
   }
 
   @Post('negocios/:id/productos')
@@ -83,14 +95,41 @@ export class ProductoController {
     );
   }
 
+  @Get('productos/favoritos')
+  listFavoritos(@Req() req: any) {
+    return this.service.listFavoritos(this.getAuthenticatedUserId(req));
+  }
+
   @Get('productos/buscar')
-  search(@Query('q') q = '', @Query('limit') limit?: number) {
-    return this.service.search(q, limit);
+  search(@Query('q') q = '', @Query('limit') limit?: number, @Req() req?: any) {
+    return this.service.search(q, limit, this.getOptionalUserId(req ?? {}));
   }
 
   @Get('productos/:id')
-  get(@Param('id', ParseIntPipe) id: number) {
-    return this.service.getById(id);
+  get(@Param('id', ParseIntPipe) id: number, @Req() req?: any) {
+    return this.service.getById(id, this.getOptionalUserId(req ?? {}));
+  }
+
+  @Post('productos/:productoId/favorito')
+  addFavorito(
+    @Param('productoId', ParseIntPipe) productoId: number,
+    @Req() req: any,
+  ) {
+    return this.service.addFavorito(
+      productoId,
+      this.getAuthenticatedUserId(req),
+    );
+  }
+
+  @Delete('productos/:productoId/favorito')
+  removeFavorito(
+    @Param('productoId', ParseIntPipe) productoId: number,
+    @Req() req: any,
+  ) {
+    return this.service.removeFavorito(
+      productoId,
+      this.getAuthenticatedUserId(req),
+    );
   }
 
   @Patch('productos/:id')

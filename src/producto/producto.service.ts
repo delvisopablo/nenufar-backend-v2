@@ -7,11 +7,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  EstadoSolicitudProducto,
-  Prisma,
-  RolGlobal,
-} from '@prisma/client';
+import { EstadoSolicitudProducto, Prisma, RolGlobal } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
@@ -30,6 +26,27 @@ import {
   solicitudProductoSelect,
 } from './producto-catalogo.util';
 
+const productoConNegocioSelect = {
+  ...productoCatalogSelect,
+  negocio: {
+    select: {
+      id: true,
+      nombre: true,
+      slug: true,
+      duenoId: true,
+      fotoPerfil: true,
+      fotoPortada: true,
+      nenufarActivo: true,
+      nenufarAsset: true,
+      activo: true,
+    },
+  },
+} satisfies Prisma.ProductoSelect;
+
+type ProductoConNegocioRecord = Prisma.ProductoGetPayload<{
+  select: typeof productoConNegocioSelect;
+}>;
+
 function toPaging(page?: number | string, limit?: number | string) {
   const p = Math.max(1, Number(page ?? 1) | 0);
   const l = Math.max(1, Math.min(100, Number(limit ?? 20) | 0));
@@ -40,6 +57,18 @@ function trimOptionalString(value?: string | null) {
   if (value === undefined) return undefined;
   const normalized = value?.trim();
   return normalized || null;
+}
+
+function mapProductoConNegocio(
+  producto: ProductoConNegocioRecord,
+  favorito = false,
+) {
+  const { negocio, ...productoCatalogo } = producto;
+  return {
+    ...mapProductoCatalogo(productoCatalogo),
+    negocio,
+    favorito,
+  };
 }
 
 @Injectable()
@@ -101,6 +130,46 @@ export class ProductoService {
     }
   }
 
+  private async getFavoritosProductoIds(
+    usuarioId: number | undefined,
+    productoIds: number[],
+  ) {
+    if (!usuarioId || productoIds.length === 0) {
+      return new Set<number>();
+    }
+
+    const favoritos = await this.prisma.productoFavorito.findMany({
+      where: {
+        usuarioId,
+        productoId: { in: [...new Set(productoIds)] },
+      },
+      select: { productoId: true },
+    });
+
+    return new Set(favoritos.map((favorito) => favorito.productoId));
+  }
+
+  private async assertProductoVisible(productoId: number) {
+    const producto = await this.prisma.producto.findFirst({
+      where: {
+        id: productoId,
+        activo: true,
+        eliminadoEn: null,
+        negocio: {
+          activo: true,
+          eliminadoEn: null,
+        },
+      },
+      select: productoConNegocioSelect,
+    });
+
+    if (!producto) {
+      throw new NotFoundException('Producto no encontrado');
+    }
+
+    return producto;
+  }
+
   private async createCatalogProduct(
     tx: Prisma.TransactionClient,
     negocioId: number,
@@ -140,7 +209,9 @@ export class ProductoService {
     const stockDisponible = dto.stockDisponible ?? 0;
     const stockReservado = dto.stockReservado ?? 0;
     if (stockDisponible < 0 || stockReservado < 0) {
-      throw new BadRequestException('Los valores de stock no pueden ser negativos');
+      throw new BadRequestException(
+        'Los valores de stock no pueden ser negativos',
+      );
     }
     if (stockReservado > stockDisponible) {
       throw new BadRequestException(
@@ -199,6 +270,7 @@ export class ProductoService {
     q?: string,
     page?: number | string,
     limit?: number | string,
+    usuarioId?: number,
   ) {
     const { skip, take, page: p, limit: l } = toPaging(page, limit);
     const term = q?.trim();
@@ -232,16 +304,23 @@ export class ProductoService {
       }),
       this.prisma.producto.count({ where }),
     ]);
+    const favoritos = await this.getFavoritosProductoIds(
+      usuarioId,
+      items.map((item) => item.id),
+    );
 
     return {
-      items: items.map((item) => mapProductoCatalogo(item)),
+      items: items.map((item) => ({
+        ...mapProductoCatalogo(item),
+        favorito: favoritos.has(item.id),
+      })),
       total,
       page: p,
       limit: l,
     };
   }
 
-  async search(q: string, limit?: number | string) {
+  async search(q: string, limit?: number | string, usuarioId?: number) {
     const term = q.trim();
     if (!term) {
       return { items: [], total: 0 };
@@ -288,10 +367,17 @@ export class ProductoService {
       orderBy: [{ nombre: 'asc' }, { id: 'asc' }],
       take,
     });
+    const favoritos = await this.getFavoritosProductoIds(
+      usuarioId,
+      items.map((item) => item.id),
+    );
 
     return {
       items: items.map((item) => {
-        const producto = mapProductoCatalogo(item);
+        const producto = {
+          ...mapProductoCatalogo(item),
+          favorito: favoritos.has(item.id),
+        };
         return {
           ...producto,
           producto,
@@ -307,19 +393,84 @@ export class ProductoService {
     };
   }
 
-  async getById(id: number) {
+  async getById(id: number, usuarioId?: number) {
     const prod = await this.prisma.producto.findUnique({
       where: { id },
       select: {
         ...productoCatalogSelect,
-        negocio: { select: { id: true, nombre: true, slug: true, duenoId: true } },
+        negocio: {
+          select: { id: true, nombre: true, slug: true, duenoId: true },
+        },
       },
     });
     if (!prod) throw new NotFoundException('Producto no encontrado');
+    const favoritos = await this.getFavoritosProductoIds(usuarioId, [prod.id]);
     return {
       ...mapProductoCatalogo(prod),
       negocio: prod.negocio,
+      favorito: favoritos.has(prod.id),
     };
+  }
+
+  async listFavoritos(usuarioId: number) {
+    const favoritos = await this.prisma.productoFavorito.findMany({
+      where: {
+        usuarioId,
+        producto: {
+          activo: true,
+          eliminadoEn: null,
+          negocio: {
+            activo: true,
+            eliminadoEn: null,
+          },
+        },
+      },
+      select: {
+        creadoEn: true,
+        producto: { select: productoConNegocioSelect },
+      },
+      orderBy: [{ creadoEn: 'desc' }, { id: 'desc' }],
+    });
+
+    return {
+      items: favoritos.map((favorito) => ({
+        ...mapProductoConNegocio(favorito.producto, true),
+        favoritoCreadoEn: favorito.creadoEn,
+      })),
+      total: favoritos.length,
+    };
+  }
+
+  async addFavorito(productoId: number, usuarioId: number) {
+    const producto = await this.assertProductoVisible(productoId);
+    const favorito = await this.prisma.productoFavorito.upsert({
+      where: {
+        usuarioId_productoId: {
+          usuarioId,
+          productoId,
+        },
+      },
+      update: {},
+      create: {
+        usuarioId,
+        productoId,
+      },
+      select: { creadoEn: true },
+    });
+
+    return {
+      favorito: true,
+      favoritoCreadoEn: favorito.creadoEn,
+      producto: mapProductoConNegocio(producto, true),
+    };
+  }
+
+  async removeFavorito(productoId: number, usuarioId: number) {
+    await this.prisma.productoFavorito.deleteMany({
+      where: { usuarioId, productoId },
+    });
+
+    return { favorito: false };
   }
 
   /** Crea producto dentro de un negocio (solo dueño o admin) */
@@ -359,7 +510,9 @@ export class ProductoService {
     const nextStockDisponible = dto.stockDisponible ?? prod.stockDisponible;
     const nextStockReservado = dto.stockReservado ?? prod.stockReservado;
     if (nextStockDisponible < 0 || nextStockReservado < 0) {
-      throw new BadRequestException('Los valores de stock no pueden ser negativos');
+      throw new BadRequestException(
+        'Los valores de stock no pueden ser negativos',
+      );
     }
     if (nextStockReservado > nextStockDisponible) {
       throw new BadRequestException(
@@ -369,7 +522,9 @@ export class ProductoService {
 
     try {
       if (dto.nombre !== undefined && !dto.nombre.trim()) {
-        throw new BadRequestException('El nombre del producto no puede estar vacío');
+        throw new BadRequestException(
+          'El nombre del producto no puede estar vacío',
+        );
       }
 
       const updated = await this.prisma.producto.update({
@@ -443,7 +598,9 @@ export class ProductoService {
     isAdmin = false,
   ) {
     if (dto.deltaDisponible === undefined && dto.deltaReservado === undefined) {
-      throw new BadRequestException('Debes indicar al menos un ajuste de stock');
+      throw new BadRequestException(
+        'Debes indicar al menos un ajuste de stock',
+      );
     }
 
     const producto = await this.prisma.producto.findUnique({
@@ -457,7 +614,11 @@ export class ProductoService {
     });
 
     if (!producto) throw new NotFoundException('Producto no encontrado');
-    await this.assertCanManageNegocio(producto.negocioId, currentUserId, isAdmin);
+    await this.assertCanManageNegocio(
+      producto.negocioId,
+      currentUserId,
+      isAdmin,
+    );
 
     const nextStockDisponible =
       producto.stockDisponible + (dto.deltaDisponible ?? 0);
@@ -500,7 +661,9 @@ export class ProductoService {
   ) {
     const nombre = dto.nombre.trim();
     if (!nombre) {
-      throw new BadRequestException('El nombre de la sugerencia es obligatorio');
+      throw new BadRequestException(
+        'El nombre de la sugerencia es obligatorio',
+      );
     }
 
     const solicitud = await this.prisma.$transaction(async (tx) => {
@@ -666,7 +829,11 @@ export class ProductoService {
       throw new NotFoundException('Solicitud no encontrada');
     }
 
-    await this.assertCanManageNegocio(solicitud.negocioId, actorUserId, isAdmin);
+    await this.assertCanManageNegocio(
+      solicitud.negocioId,
+      actorUserId,
+      isAdmin,
+    );
 
     if (solicitud.estado !== EstadoSolicitudProducto.PENDIENTE) {
       throw new BadRequestException(

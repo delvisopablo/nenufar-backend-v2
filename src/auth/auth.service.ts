@@ -43,6 +43,7 @@ type AuthenticatedRequest = Request & {
     email?: string;
     nickname?: string;
     rolGlobal?: RolGlobal;
+    rememberMe?: boolean;
   };
 };
 
@@ -179,6 +180,20 @@ type RegisterNegocioResult = {
 };
 type OneTimeTokenType = 'verify-email' | 'reset-password';
 type SessionTokenType = 'access' | 'refresh';
+type SessionTokenPayload = {
+  sub: number;
+  email?: string;
+  nickname?: string;
+  rolGlobal?: RolGlobal;
+  rememberMe?: boolean;
+};
+type ResolvedRequestUser = {
+  id: number;
+  email: string;
+  nickname: string;
+  rolGlobal: RolGlobal;
+  rememberMe: boolean;
+};
 type LoginIdentifier = {
   raw: string;
   type: 'email' | 'nickname';
@@ -193,6 +208,18 @@ function parseTTL(s?: string, fallbackSeconds = 900) {
   if (s.endsWith('d')) return parseInt(s, 10) * 86400;
   const n = Number(s);
   return Number.isFinite(n) ? n : fallbackSeconds;
+}
+
+function parseRefreshTTL(rememberMe?: boolean) {
+  if (rememberMe) {
+    return parseTTL(
+      process.env.JWT_REFRESH_REMEMBER_TTL ??
+        process.env.JWT_REMEMBER_ME_REFRESH_TTL,
+      60 * 60 * 24 * 30,
+    );
+  }
+
+  return parseTTL(process.env.JWT_REFRESH_TTL, 60 * 60 * 24 * 30);
 }
 
 function normalizeRequiredString(value: unknown, fieldLabel: string) {
@@ -521,35 +548,36 @@ export class AuthService {
     }
   }
 
-  private async signTokens(user: {
-    id: number;
-    email: string;
-    nickname: string;
-    rolGlobal: RolGlobal;
-  }) {
+  private async signTokens(
+    user: {
+      id: number;
+      email: string;
+      nickname: string;
+      rolGlobal: RolGlobal;
+    },
+    options: { rememberMe?: boolean } = {},
+  ) {
     const { accessSecret, refreshSecret } = this.getJwtSecrets();
     const accessTTL = parseTTL(process.env.JWT_ACCESS_TTL, 900);
-    const refreshTTL = parseTTL(process.env.JWT_REFRESH_TTL, 60 * 60 * 24 * 30);
+    const rememberMe = options.rememberMe === true;
+    const refreshTTL = parseRefreshTTL(rememberMe);
+    const payload = {
+      sub: user.id,
+      email: user.email,
+      nickname: user.nickname,
+      rolGlobal: user.rolGlobal,
+      rememberMe,
+    };
 
-    const access = await this.jwt.signAsync(
-      {
-        sub: user.id,
-        email: user.email,
-        nickname: user.nickname,
-        rolGlobal: user.rolGlobal,
-      },
-      { secret: accessSecret, expiresIn: accessTTL },
-    );
-    const refresh = await this.jwt.signAsync(
-      {
-        sub: user.id,
-        email: user.email,
-        nickname: user.nickname,
-        rolGlobal: user.rolGlobal,
-      },
-      { secret: refreshSecret, expiresIn: refreshTTL },
-    );
-    return { access, refresh, accessTTL, refreshTTL };
+    const access = await this.jwt.signAsync(payload, {
+      secret: accessSecret,
+      expiresIn: accessTTL,
+    });
+    const refresh = await this.jwt.signAsync(payload, {
+      secret: refreshSecret,
+      expiresIn: refreshTTL,
+    });
+    return { access, refresh, accessTTL, refreshTTL, rememberMe };
   }
 
   private extractBearerToken(req: Request) {
@@ -601,12 +629,7 @@ export class AuthService {
         : this.getJwtSecrets().refreshSecret;
 
     try {
-      return await this.jwt.verifyAsync<{
-        sub: number;
-        email?: string;
-        nickname?: string;
-        rolGlobal?: RolGlobal;
-      }>(token, { secret });
+      return await this.jwt.verifyAsync<SessionTokenPayload>(token, { secret });
     } catch {
       throw new UnauthorizedException('Token inválido');
     }
@@ -615,9 +638,13 @@ export class AuthService {
   private async resolveRequestUser(
     req: AuthenticatedRequest,
     type: SessionTokenType,
-  ) {
+  ): Promise<ResolvedRequestUser> {
     const requestUserId = Number(req.user?.id ?? req.user?.sub);
-    if (Number.isFinite(requestUserId) && requestUserId > 0) {
+    if (
+      type === 'access' &&
+      Number.isFinite(requestUserId) &&
+      requestUserId > 0
+    ) {
       const currentUser = await this.getCurrentAuthUser(requestUserId);
 
       return {
@@ -625,6 +652,7 @@ export class AuthService {
         email: currentUser.email,
         nickname: currentUser.nickname,
         rolGlobal: currentUser.rolGlobal,
+        rememberMe: req.user?.rememberMe === true,
       };
     }
 
@@ -644,7 +672,41 @@ export class AuthService {
       email: currentUser.email,
       nickname: currentUser.nickname,
       rolGlobal: currentUser.rolGlobal,
+      rememberMe: payload.rememberMe === true,
     };
+  }
+
+  private async refreshSessionFromRequest(
+    req: AuthenticatedRequest,
+    res?: Response,
+  ) {
+    const payload = await this.resolveRequestUser(req, 'refresh');
+    if (!payload.email || !payload.nickname) {
+      throw new UnauthorizedException();
+    }
+
+    const tokens = await this.signTokens(
+      {
+        id: payload.id,
+        email: payload.email,
+        nickname: payload.nickname,
+        rolGlobal: payload.rolGlobal,
+      },
+      { rememberMe: payload.rememberMe },
+    );
+
+    if (res) {
+      this.setSessionCookies(res, tokens, 'refresh');
+    }
+
+    return payload;
+  }
+
+  private shouldTryRefreshAfterAccessError(error: unknown) {
+    return (
+      error instanceof UnauthorizedException &&
+      error.message !== 'Esta cuenta ha sido eliminada.'
+    );
   }
 
   private setSessionCookies(
@@ -1224,12 +1286,15 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    const tokens = await this.signTokens({
-      id: user.id,
-      email: user.email,
-      nickname: user.nickname,
-      rolGlobal: user.rolGlobal,
-    });
+    const tokens = await this.signTokens(
+      {
+        id: user.id,
+        email: user.email,
+        nickname: user.nickname,
+        rolGlobal: user.rolGlobal,
+      },
+      { rememberMe: dto.rememberMe === true },
+    );
 
     this.setSessionCookies(res, tokens, 'login');
 
@@ -1257,20 +1322,7 @@ export class AuthService {
 
   async refresh(req: AuthenticatedRequest, res: Response) {
     try {
-      const payload = await this.resolveRequestUser(req, 'refresh');
-      if (!payload.email || !payload.nickname) {
-        throw new UnauthorizedException();
-      }
-
-      const tokens = await this.signTokens({
-        id: payload.id,
-        email: payload.email,
-        nickname: payload.nickname,
-        rolGlobal: payload.rolGlobal,
-      });
-
-      this.setSessionCookies(res, tokens, 'refresh');
-
+      await this.refreshSessionFromRequest(req, res);
       return { ok: true };
     } catch (error) {
       if (error instanceof UnauthorizedException) {
@@ -1287,7 +1339,18 @@ export class AuthService {
 
   async me(req: AuthenticatedRequest, res?: Response) {
     try {
-      const payload = await this.resolveRequestUser(req, 'access');
+      let payload: ResolvedRequestUser;
+
+      try {
+        payload = await this.resolveRequestUser(req, 'access');
+      } catch (accessError) {
+        if (!this.shouldTryRefreshAfterAccessError(accessError)) {
+          throw accessError;
+        }
+
+        payload = await this.refreshSessionFromRequest(req, res);
+      }
+
       const user = await this.getPublicAuthUserById(payload.id);
 
       if (!user) {
