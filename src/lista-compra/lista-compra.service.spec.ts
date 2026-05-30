@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ListaCompraService } from './lista-compra.service';
@@ -16,7 +16,9 @@ describe('ListaCompraService', () => {
       upsert: jest.Mock;
       create: jest.Mock;
       findFirst: jest.Mock;
+      findUnique: jest.Mock;
       update: jest.Mock;
+      delete: jest.Mock;
       deleteMany: jest.Mock;
     };
   };
@@ -77,7 +79,9 @@ describe('ListaCompraService', () => {
         upsert: jest.fn(),
         create: jest.fn(),
         findFirst: jest.fn(),
+        findUnique: jest.fn(),
         update: jest.fn(),
+        delete: jest.fn(),
         deleteMany: jest.fn(),
       },
     };
@@ -176,12 +180,30 @@ describe('ListaCompraService', () => {
   });
 
   it('no permite modificar items de otro usuario', async () => {
-    prisma.listaCompraItem.findFirst.mockResolvedValue(null);
+    prisma.listaCompraItem.findUnique.mockResolvedValue({
+      id: 99,
+      listaCompra: { usuarioId: 8 },
+    });
 
     await expect(
       service.updateItem(7, 99, { completado: true }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(ForbiddenException);
     expect(prisma.listaCompraItem.update).not.toHaveBeenCalled();
+  });
+
+  it('borra solo items propios y devuelve ok', async () => {
+    prisma.listaCompraItem.findUnique.mockResolvedValue({
+      id: 9,
+      listaCompra: { usuarioId: 7 },
+    });
+    prisma.listaCompraItem.delete.mockResolvedValue({ id: 9 });
+
+    const result = await service.removeItem(7, 9);
+
+    expect(prisma.listaCompraItem.delete).toHaveBeenCalledWith({
+      where: { id: 9 },
+    });
+    expect(result).toEqual({ ok: true, itemId: 9 });
   });
 
   it('borra solo completados del usuario autenticado', async () => {
@@ -195,6 +217,6 @@ describe('ListaCompraService', () => {
         listaCompra: { usuarioId: 7 },
       },
     });
-    expect(result).toEqual({ eliminados: 2 });
+    expect(result).toEqual({ ok: true, deletedCount: 2 });
   });
 });

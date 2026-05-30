@@ -66,6 +66,11 @@ export class ResenaController {
     return this.resenaService.calcularMediaPorNegocio(negocioId);
   }
 
+  @Get(':id/comentarios')
+  comentarios(@Param('id', ParseIntPipe) id: number) {
+    return this.resenaService.getComentarios(id);
+  }
+
   /** Crear reseña (+ post + pétalos) */
   @Post()
   crear(@Body() dto: CreateResenaDto, @Req() req: any) {

@@ -33,8 +33,23 @@ export class AuthGuard implements CanActivate {
     private readonly prisma: PrismaService,
   ) {}
 
+  private getAuthenticatedUserId(request: AuthenticatedRequest) {
+    const userId = Number(request.user?.id ?? request.user?.sub);
+    return Number.isInteger(userId) && userId > 0 ? userId : undefined;
+  }
+
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+    const authenticatedUserId = this.getAuthenticatedUserId(request);
+
+    if (authenticatedUserId) {
+      request.usuario = {
+        id: authenticatedUserId,
+        email: request.user?.email,
+      };
+      return true;
+    }
+
     const authHeader = request.headers['authorization'];
     const bearerToken =
       authHeader && authHeader.startsWith('Bearer ')

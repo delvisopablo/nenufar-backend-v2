@@ -40,8 +40,8 @@ export class JwtAccessStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(private readonly prisma: PrismaService) {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
-        ExtractJwt.fromAuthHeaderAsBearerToken(),
         fromAccessCookie,
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
       ]),
       secretOrKey: getAccessSecret(),
       ignoreExpiration: false,

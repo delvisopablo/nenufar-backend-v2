@@ -320,12 +320,8 @@ export class ProductoService {
     };
   }
 
-  async search(q: string, limit?: number | string, usuarioId?: number) {
+  async search(q = '', limit?: number | string, usuarioId?: number) {
     const term = q.trim();
-    if (!term) {
-      return { items: [], total: 0 };
-    }
-
     const take = Math.max(1, Math.min(50, Number(limit ?? 20) | 0));
     const items = await this.prisma.producto.findMany({
       where: {
@@ -335,22 +331,33 @@ export class ProductoService {
           activo: true,
           eliminadoEn: null,
         },
-        OR: [
-          { nombre: { contains: term, mode: 'insensitive' } },
-          { descripcion: { contains: term, mode: 'insensitive' } },
-          { codigoProducto: { contains: term, mode: 'insensitive' } },
-          { codigoSKU: { contains: term, mode: 'insensitive' } },
-          {
-            negocio: {
-              nombre: { contains: term, mode: 'insensitive' },
-            },
-          },
-          {
-            negocio: {
-              slug: { contains: term, mode: 'insensitive' },
-            },
-          },
-        ],
+        ...(term
+          ? {
+              OR: [
+                { nombre: { contains: term, mode: 'insensitive' } },
+                { descripcion: { contains: term, mode: 'insensitive' } },
+                { codigoProducto: { contains: term, mode: 'insensitive' } },
+                { codigoSKU: { contains: term, mode: 'insensitive' } },
+                {
+                  negocio: {
+                    nombre: { contains: term, mode: 'insensitive' },
+                  },
+                },
+                {
+                  negocio: {
+                    slug: { contains: term, mode: 'insensitive' },
+                  },
+                },
+                {
+                  negocio: {
+                    dueno: {
+                      nickname: { contains: term, mode: 'insensitive' },
+                    },
+                  },
+                },
+              ],
+            }
+          : {}),
       },
       select: {
         ...productoCatalogSelect,
@@ -361,10 +368,14 @@ export class ProductoService {
             slug: true,
             nenufarActivo: true,
             nenufarAsset: true,
+            categoria: { select: { id: true, nombre: true } },
+            dueno: { select: { id: true, nickname: true } },
           },
         },
       },
-      orderBy: [{ nombre: 'asc' }, { id: 'asc' }],
+      orderBy: term
+        ? [{ nombre: 'asc' }, { id: 'asc' }]
+        : [{ actualizadoEn: 'desc' }, { creadoEn: 'desc' }, { id: 'desc' }],
       take,
     });
     const favoritos = await this.getFavoritosProductoIds(
@@ -384,6 +395,8 @@ export class ProductoService {
           negocio: item.negocio,
           precio: producto.precio,
           slug: item.negocio.slug,
+          categoria: item.negocio.categoria,
+          negocioNickname: item.negocio.dueno.nickname,
           nenufarActivo:
             item.negocio.nenufarActivo ?? item.negocio.nenufarAsset ?? null,
           nenufarAsset: item.negocio.nenufarAsset,

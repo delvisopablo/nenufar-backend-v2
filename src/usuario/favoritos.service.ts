@@ -1,9 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import {
-  NotFoundException,
-  ConflictException,
-} from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 const productoFavoritoSelect = {
@@ -95,24 +92,11 @@ export class FavoritosService {
   }
 
   async deleteFavorito(usuarioId: number, productoId: number) {
-    const favorito = await this.prisma.productoFavorito.findUnique({
-      where: {
-        usuarioId_productoId: { usuarioId, productoId },
-      },
-      select: { id: true },
+    await this.prisma.productoFavorito.deleteMany({
+      where: { usuarioId, productoId },
     });
 
-    if (!favorito) {
-      throw new NotFoundException('Favorito no encontrado');
-    }
-
-    await this.prisma.productoFavorito.delete({
-      where: {
-        usuarioId_productoId: { usuarioId, productoId },
-      },
-    });
-
-    return { ok: true, message: 'Favorito eliminado' };
+    return { ok: true, productoId, favorito: false };
   }
 
   async isFavorito(usuarioId: number, productoId: number): Promise<boolean> {

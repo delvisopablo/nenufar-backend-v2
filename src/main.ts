@@ -170,11 +170,23 @@ function logRegisteredRoutes(
 }
 
 function getAllowedCorsOrigins() {
+  const envOrigins = [
+    process.env.FRONTEND_URL,
+    process.env.FRONTEND_ORIGIN,
+    process.env.CLIENT_URL,
+    process.env.APP_URL,
+  ];
   const extraOrigins = process.env.CORS_ORIGINS?.split(',')
     .map((origin) => origin.trim())
     .filter(Boolean);
 
-  return [...new Set([...defaultAllowedOrigins, ...(extraOrigins ?? [])])];
+  return [
+    ...new Set(
+      [...defaultAllowedOrigins, ...envOrigins, ...(extraOrigins ?? [])]
+        .map((origin) => origin?.trim().replace(/\/$/, ''))
+        .filter(Boolean) as string[],
+    ),
+  ];
 }
 
 async function bootstrap() {

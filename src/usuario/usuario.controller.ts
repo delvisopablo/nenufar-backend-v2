@@ -153,6 +153,12 @@ export class UsuarioController {
     return this.nenulistaService.addProducto(userId, dto);
   }
 
+  @Delete('me/lista-compra/completados')
+  async clearCompletados(@Req() req: AuthenticatedRequest) {
+    const userId = this.getAuthenticatedUserId(req);
+    return this.nenulistaService.clearCompletados(userId);
+  }
+
   @Patch('me/lista-compra/:itemId')
   async updateListaCompraItem(
     @Param('itemId', ParseIntPipe) itemId: number,
@@ -170,12 +176,6 @@ export class UsuarioController {
   ) {
     const userId = this.getAuthenticatedUserId(req);
     return this.nenulistaService.deleteItem(userId, itemId);
-  }
-
-  @Delete('me/lista-compra/completados')
-  async clearCompletados(@Req() req: AuthenticatedRequest) {
-    const userId = this.getAuthenticatedUserId(req);
-    return this.nenulistaService.clearCompletados(userId);
   }
 
   @Get('by-nickname/:nickname')
@@ -278,7 +278,10 @@ export class UsuarioController {
     return `uploads/usuarios/perfil/${filename}`;
   }
 
-  private buildPublicUploadUrl(req: AuthenticatedRequest, relativePath: string) {
+  private buildPublicUploadUrl(
+    req: AuthenticatedRequest,
+    relativePath: string,
+  ) {
     const configuredBase =
       process.env.PUBLIC_BACKEND_URL ??
       process.env.BACKEND_PUBLIC_URL ??
@@ -295,10 +298,7 @@ export class UsuarioController {
 
     const forwardedHost = req.get('x-forwarded-host')?.split(',')[0]?.trim();
     const host = forwardedHost || req.get('host');
-    const forwardedProto = req
-      .get('x-forwarded-proto')
-      ?.split(',')[0]
-      ?.trim();
+    const forwardedProto = req.get('x-forwarded-proto')?.split(',')[0]?.trim();
     const protocol = forwardedProto || req.protocol || 'http';
 
     return host ? `${protocol}://${host}/${relativePath}` : `/${relativePath}`;

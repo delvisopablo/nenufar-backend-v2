@@ -12,7 +12,16 @@ type AuthenticatedRequest = Request & {
     nickname?: string;
     rolGlobal?: RolGlobal;
     isAdmin?: boolean;
+    rememberMe?: boolean;
   };
+};
+
+type SessionPayload = {
+  sub: number;
+  email?: string;
+  nickname?: string;
+  rolGlobal?: RolGlobal;
+  rememberMe?: boolean;
 };
 
 @Injectable()
@@ -22,57 +31,102 @@ export class AuthUserMiddleware implements NestMiddleware {
     private readonly prisma: PrismaService,
   ) {}
 
-  async use(req: AuthenticatedRequest, _res: Response, next: NextFunction) {
-    const bearerToken = req.headers.authorization?.startsWith('Bearer ')
+  private getBearerToken(req: AuthenticatedRequest) {
+    return req.headers.authorization?.startsWith('Bearer ')
       ? req.headers.authorization.slice(7)
       : undefined;
-    const token =
-      req.cookies?.access_token ?? req.cookies?.accessToken ?? bearerToken;
+  }
 
-    if (!token) {
-      return next();
+  private getAccessToken(req: AuthenticatedRequest) {
+    return (
+      req.cookies?.access_token ??
+      req.cookies?.accessToken ??
+      this.getBearerToken(req)
+    );
+  }
+
+  private getRefreshToken(req: AuthenticatedRequest) {
+    return req.cookies?.refresh_token ?? req.cookies?.refreshToken;
+  }
+
+  private async setRequestUser(
+    req: AuthenticatedRequest,
+    payload: SessionPayload,
+  ) {
+    const usuario = await this.prisma.usuario.findUnique({
+      where: { id: payload.sub },
+      select: {
+        id: true,
+        email: true,
+        nickname: true,
+        rolGlobal: true,
+        estadoCuenta: true,
+        eliminadoEn: true,
+      },
+    });
+
+    if (
+      !usuario ||
+      usuario.eliminadoEn ||
+      usuario.estadoCuenta === EstadoCuenta.ELIMINADA
+    ) {
+      return;
+    }
+
+    req.user = {
+      id: usuario.id,
+      sub: usuario.id,
+      email: usuario.email,
+      nickname: usuario.nickname,
+      rolGlobal: usuario.rolGlobal,
+      isAdmin: usuario.rolGlobal === RolGlobal.ADMIN,
+      rememberMe: payload.rememberMe === true,
+    };
+  }
+
+  private async tryAccessToken(req: AuthenticatedRequest) {
+    const token = this.getAccessToken(req);
+    const secret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET;
+
+    if (!token || !secret) {
+      return false;
     }
 
     try {
-      const payload = await this.jwtService.verifyAsync<{
-        sub: number;
-        email?: string;
-        nickname?: string;
-        rolGlobal?: RolGlobal;
-      }>(token, {
-        secret: process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET,
+      const payload = await this.jwtService.verifyAsync<SessionPayload>(token, {
+        secret,
       });
-
-      const usuario = await this.prisma.usuario.findUnique({
-        where: { id: payload.sub },
-        select: {
-          id: true,
-          email: true,
-          nickname: true,
-          rolGlobal: true,
-          estadoCuenta: true,
-          eliminadoEn: true,
-        },
-      });
-
-      if (
-        !usuario ||
-        usuario.eliminadoEn ||
-        usuario.estadoCuenta === EstadoCuenta.ELIMINADA
-      ) {
-        return next();
-      }
-
-      req.user = {
-        id: usuario.id,
-        sub: usuario.id,
-        email: usuario.email,
-        nickname: usuario.nickname,
-        rolGlobal: usuario.rolGlobal,
-        isAdmin: usuario.rolGlobal === RolGlobal.ADMIN,
-      };
+      await this.setRequestUser(req, payload);
+      return Boolean(req.user);
     } catch {
-      // Dejamos req.user vacío para que cada endpoint decida si requiere auth.
+      return false;
+    }
+  }
+
+  private async tryRefreshToken(req: AuthenticatedRequest) {
+    const token = this.getRefreshToken(req);
+    const secret = process.env.JWT_REFRESH_SECRET;
+
+    if (!token || !secret) {
+      return false;
+    }
+
+    try {
+      const payload = await this.jwtService.verifyAsync<SessionPayload>(token, {
+        secret,
+      });
+      await this.setRequestUser(req, payload);
+      return Boolean(req.user);
+    } catch {
+      return false;
+    }
+  }
+
+  async use(req: AuthenticatedRequest, _res: Response, next: NextFunction) {
+    await this.tryAccessToken(req);
+
+    if (!req.user) {
+      await this.tryRefreshToken(req);
     }
 
     next();

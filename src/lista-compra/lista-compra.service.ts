@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -137,17 +138,25 @@ export class ListaCompraService {
   }
 
   private async assertItemPerteneceAUsuario(itemId: number, usuarioId: number) {
-    const item = await this.prisma.listaCompraItem.findFirst({
-      where: {
-        id: itemId,
-        listaCompra: { usuarioId },
+    const item = await this.prisma.listaCompraItem.findUnique({
+      where: { id: itemId },
+      select: {
+        id: true,
+        listaCompra: {
+          select: { usuarioId: true },
+        },
       },
-      select: { id: true },
     });
 
     if (!item) {
       throw new NotFoundException('Item de lista no encontrado');
     }
+
+    if (item.listaCompra.usuarioId !== usuarioId) {
+      throw new ForbiddenException('No puedes modificar este item');
+    }
+
+    return item;
   }
 
   async getLista(usuarioId: number) {
@@ -237,18 +246,10 @@ export class ListaCompraService {
   }
 
   async removeItem(usuarioId: number, itemId: number) {
-    const result = await this.prisma.listaCompraItem.deleteMany({
-      where: {
-        id: itemId,
-        listaCompra: { usuarioId },
-      },
-    });
+    await this.assertItemPerteneceAUsuario(itemId, usuarioId);
+    await this.prisma.listaCompraItem.delete({ where: { id: itemId } });
 
-    if (result.count === 0) {
-      throw new NotFoundException('Item de lista no encontrado');
-    }
-
-    return { eliminado: true };
+    return { ok: true, itemId };
   }
 
   async removeCompleted(usuarioId: number) {
@@ -259,6 +260,6 @@ export class ListaCompraService {
       },
     });
 
-    return { eliminados: result.count };
+    return { ok: true, deletedCount: result.count };
   }
 }

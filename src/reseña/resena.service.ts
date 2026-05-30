@@ -118,6 +118,46 @@ export class ResenaService {
     };
   }
 
+  async getComentarios(resenaId: number) {
+    const post = await this.prisma.post.findFirst({
+      where: {
+        resenaId,
+        eliminadoEn: null,
+        estado: ContenidoEstado.PUBLICADO,
+      },
+      select: { id: true },
+    });
+
+    if (!post) {
+      return [];
+    }
+
+    return this.prisma.comentario.findMany({
+      where: {
+        postId: post.id,
+        eliminadoEn: null,
+        estado: ContenidoEstado.PUBLICADO,
+      },
+      select: {
+        id: true,
+        postId: true,
+        usuarioId: true,
+        contenido: true,
+        creadoEn: true,
+        actualizadoEn: true,
+        usuario: {
+          select: {
+            id: true,
+            nombre: true,
+            nickname: true,
+            foto: true,
+          },
+        },
+      },
+      orderBy: { creadoEn: 'asc' },
+    });
+  }
+
   /** Crear reseña + post + pagar pétalos (+5 autor, +5 dueño si distinto) */
   async crear(userId: number, dto: CreateResenaDto) {
     const productoIds = [...new Set(dto.productoIds ?? [])];
