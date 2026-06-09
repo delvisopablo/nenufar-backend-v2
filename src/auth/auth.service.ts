@@ -2,9 +2,12 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
   Injectable,
   InternalServerErrorException,
   Logger,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { EstadoCuenta, Prisma, RolGlobal } from '@prisma/client';
@@ -15,9 +18,11 @@ import * as bcrypt from 'bcryptjs';
 import { JwtService } from '@nestjs/jwt';
 import { CookieOptions, Request, Response } from 'express';
 import { VerifyEmailDto } from './dto/verify-email.dto';
+import { VerifyEmailTokenDto } from './dto/verify-email-token.dto';
+import { ResendEmailCodeDto } from './dto/resend-email-code.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
-import { EmailService } from '../email/email.service';
+import { AuthEmailWebhookService } from '../email/auth-email-webhook.service';
 import { RegisterNegocioDto } from './dto/register-negocio.dto';
 import {
   generateUniqueNegocioSlug,
@@ -32,9 +37,15 @@ import {
 } from '../negocio/horario.util';
 import { NenufarizarService } from '../nenufarizar/nenufarizar.service';
 import { AppError } from '../common/errors/app-error';
+import { createHash, randomInt, timingSafeEqual } from 'crypto';
 
 // Cambiar a true para hacer obligatorio el código de nenufarización en el registro de negocio
 const CODIGO_NENUFARIZACION_REQUERIDO = false;
+const EMAIL_VERIFICATION_CODE_TTL_MINUTES = 5;
+const EMAIL_VERIFICATION_CODE_TTL_MS =
+  EMAIL_VERIFICATION_CODE_TTL_MINUTES * 60 * 1000;
+const EMAIL_VERIFICATION_RESEND_COOLDOWN_MS = 60 * 1000;
+const EMAIL_VERIFICATION_MAX_ATTEMPTS = 5;
 
 type AuthenticatedRequest = Request & {
   user?: {
@@ -149,7 +160,20 @@ const welcomeEmailUserSelect = {
   id: true,
   nombre: true,
   email: true,
+  emailVerificado: true,
   welcomeEmailSentAt: true,
+} satisfies Prisma.UsuarioSelect;
+
+const emailVerificationUserSelect = {
+  id: true,
+  nombre: true,
+  nickname: true,
+  email: true,
+  emailVerificado: true,
+  codigoVerificacionEmailHash: true,
+  codigoVerificacionEmailExpiraEn: true,
+  codigoVerificacionEmailIntentos: true,
+  codigoVerificacionEmailUltimoEnvioEn: true,
 } satisfies Prisma.UsuarioSelect;
 
 type AuthUserRecord = Prisma.UsuarioGetPayload<{
@@ -157,6 +181,9 @@ type AuthUserRecord = Prisma.UsuarioGetPayload<{
 }>;
 type RegisterUserRecord = Prisma.UsuarioGetPayload<{
   select: typeof registerUserSelect;
+}>;
+type EmailVerificationUserRecord = Prisma.UsuarioGetPayload<{
+  select: typeof emailVerificationUserSelect;
 }>;
 type RegisterNegocioResult = {
   user: {
@@ -260,7 +287,7 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwt: JwtService,
-    private emailService: EmailService,
+    private authEmailWebhookService: AuthEmailWebhookService,
     private readonly nenufarizarService: NenufarizarService,
   ) {}
 
@@ -610,6 +637,16 @@ export class AuthService {
     return `${token.slice(0, 6)}...${token.slice(-4)}`;
   }
 
+  private maskEmail(email: string) {
+    const [localPart, domain] = email.split('@');
+
+    if (!localPart || !domain) {
+      return '[email-redacted]';
+    }
+
+    return `${localPart.slice(0, 2)}***@${domain}`;
+  }
+
   private logSessionCookies(
     action: 'login' | 'refresh' | 'registro' | 'registro-negocio',
     tokens: Awaited<ReturnType<AuthService['signTokens']>>,
@@ -795,8 +832,138 @@ export class AuthService {
     return user ? this.toPublicAuthUser(user) : null;
   }
 
+  private generateEmailVerificationCode(): string {
+    return randomInt(100000, 1000000).toString();
+  }
+
+  private hashEmailVerificationCode(code: string): string {
+    const secret =
+      process.env.EMAIL_VERIFICATION_SECRET?.trim() || 'nenufar-dev-secret';
+
+    return createHash('sha256').update(`${code}:${secret}`).digest('hex');
+  }
+
+  private isLegacyBcryptHash(hash: string): boolean {
+    return /^\$2[aby]\$\d{2}\$/.test(hash);
+  }
+
+  private async emailVerificationCodeMatches(
+    code: string,
+    storedHash: string,
+  ): Promise<boolean> {
+    if (this.isLegacyBcryptHash(storedHash)) {
+      return bcrypt.compare(code, storedHash);
+    }
+
+    const candidateHash = this.hashEmailVerificationCode(code);
+    const candidateBuffer = Buffer.from(candidateHash, 'hex');
+    const storedBuffer = Buffer.from(storedHash, 'hex');
+
+    return (
+      candidateBuffer.length === storedBuffer.length &&
+      timingSafeEqual(candidateBuffer, storedBuffer)
+    );
+  }
+
+  private getVerificationCodeLogSuffix(code: string): string {
+    if (process.env.NODE_ENV === 'production') {
+      return '';
+    }
+
+    return ` codeSuffix=${code.slice(-2)}`;
+  }
+
+  private async generateDifferentEmailVerificationCode(
+    previousCodeHash?: string | null,
+  ): Promise<{ code: string; hash: string }> {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const code = this.generateEmailVerificationCode();
+      const hash = this.hashEmailVerificationCode(code);
+      const repeatsPrevious = previousCodeHash
+        ? this.isLegacyBcryptHash(previousCodeHash)
+          ? await bcrypt.compare(code, previousCodeHash)
+          : hash === previousCodeHash
+        : false;
+
+      if (!repeatsPrevious) {
+        return { code, hash };
+      }
+    }
+
+    throw new InternalServerErrorException(
+      'No se pudo generar un código de verificación nuevo',
+    );
+  }
+
+  private getEmailVerificationExpiresAt() {
+    return new Date(Date.now() + EMAIL_VERIFICATION_CODE_TTL_MS);
+  }
+
+  private getVerificationDisplayName(user: {
+    nombre?: string | null;
+    nickname?: string | null;
+  }) {
+    return user.nombre?.trim() || user.nickname?.trim() || 'Nenúfar';
+  }
+
+  private async issueEmailVerificationCode(user: {
+    id: number;
+    email: string;
+    nombre?: string | null;
+    nickname?: string | null;
+    codigoVerificacionEmailHash?: string | null;
+  }) {
+    const { code, hash } = await this.generateDifferentEmailVerificationCode(
+      user.codigoVerificacionEmailHash,
+    );
+    const expiresAt = this.getEmailVerificationExpiresAt();
+    const now = new Date();
+
+    await this.prisma.usuario.update({
+      where: { id: user.id },
+      data: {
+        codigoVerificacionEmailHash: hash,
+        codigoVerificacionEmailExpiraEn: expiresAt,
+        codigoVerificacionEmailIntentos: 0,
+        codigoVerificacionEmailUltimoEnvioEn: now,
+      },
+    });
+
+    this.logger.log(
+      `Código de verificación generado usuario=${user.id} email=${this.maskEmail(user.email)} generatedNewCode=true expiraEn=${expiresAt.toISOString()}${this.getVerificationCodeLogSuffix(code)}`,
+    );
+
+    try {
+      const sent = await this.authEmailWebhookService.sendConfirmationCode(
+        user.email,
+        this.getVerificationDisplayName(user),
+        code,
+      );
+
+      if (!sent) {
+        this.logger.warn(
+          `No se pudo notificar código de verificación por n8n para usuario ${user.id} email=${this.maskEmail(user.email)}. El flujo continúa.`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Fallo enviando código de verificación por n8n para usuario ${user.id} email=${this.maskEmail(user.email)}. El flujo continúa.`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+
+    return expiresAt;
+  }
+
+  private buildEmailVerificationInfo(email: string) {
+    return {
+      email: this.maskEmail(email),
+      expiresInMinutes: EMAIL_VERIFICATION_CODE_TTL_MINUTES,
+    };
+  }
+
   private async sendWelcomeEmailIfNeeded(userId: number) {
-    if (!this.emailService.isEnabled()) {
+    if (!this.authEmailWebhookService.isEnabled()) {
       return;
     }
 
@@ -810,6 +977,13 @@ export class AuthService {
         return;
       }
 
+      if (!user.emailVerificado) {
+        this.logger.debug(
+          `Welcome email pospuesto hasta verificar email para usuario ${userId}`,
+        );
+        return;
+      }
+
       if (user.welcomeEmailSentAt) {
         this.logger.debug(
           `Welcome email ya enviado previamente al usuario ${userId}`,
@@ -817,7 +991,14 @@ export class AuthService {
         return;
       }
 
-      await this.emailService.sendWelcomeEmail(user.email, user.nombre);
+      const sent = await this.authEmailWebhookService.sendWelcomeEmail(
+        user.email,
+        user.nombre,
+      );
+
+      if (!sent) {
+        return;
+      }
 
       const updateResult = await this.prisma.usuario.updateMany({
         where: {
@@ -835,11 +1016,11 @@ export class AuthService {
       }
 
       this.logger.log(
-        `Welcome email enviado correctamente al usuario ${userId}`,
+        `Webhook de welcome email enviado correctamente al usuario ${userId}`,
       );
     } catch (error) {
       this.logger.error(
-        `Fallo enviando welcome email al usuario ${userId}. El login continúa y welcomeEmailSentAt no se marca.`,
+        `Fallo notificando welcome email al usuario ${userId}. El flujo continúa y welcomeEmailSentAt no se marca.`,
         error instanceof Error ? error.stack : undefined,
       );
     }
@@ -906,6 +1087,8 @@ export class AuthService {
           nickname: normalizedNickname,
           email: normalizedEmail,
           password: hash,
+          emailVerificado: false,
+          codigoVerificacionEmailIntentos: 0,
           ...(normalizedBiografia !== undefined
             ? { biografia: normalizedBiografia }
             : {}),
@@ -938,11 +1121,7 @@ export class AuthService {
       this.setSessionCookies(res, tokens, 'registro');
       this.logger.log(`[registro] usuario creado id=${user.id}`);
 
-      const verificationToken = await this.signOneTimeToken('verify-email', {
-        id: user.id,
-        email: user.email,
-        nickname: user.nickname,
-      });
+      await this.issueEmailVerificationCode(user);
 
       const publicUser =
         (await this.getPublicAuthUserById(user.id)) ??
@@ -951,7 +1130,9 @@ export class AuthService {
       return {
         access_token: tokens.access,
         usuario: publicUser,
-        verificationToken,
+        user: publicUser,
+        requiresEmailVerification: true,
+        emailVerification: this.buildEmailVerificationInfo(user.email),
       };
     } catch (error) {
       if (
@@ -1115,6 +1296,8 @@ export class AuthService {
               nickname: normalizedNickname,
               email: normalizedEmail,
               password: hash,
+              emailVerificado: false,
+              codigoVerificacionEmailIntentos: 0,
               ultimoLoginEn: new Date(),
             },
             select: {
@@ -1210,22 +1393,29 @@ export class AuthService {
         `[registro-negocio] usuario id=${result.user.id} negocio id=${result.negocio.id}`,
       );
 
+      await this.issueEmailVerificationCode(result.user);
+
+      const publicUser = (await this.getPublicAuthUserById(result.user.id)) ?? {
+        id: result.user.id,
+        nombre: result.user.nombre,
+        nickname: result.user.nickname,
+        email: result.user.email,
+        rolGlobal: result.user.rolGlobal,
+        rol: 'negocio',
+        negocio: {
+          ...result.negocio,
+          horario: this.cleanHorarioForResponse(result.negocio.horario),
+          nenufarActivo:
+            result.negocio.nenufarActivo ?? result.negocio.nenufarAsset,
+        },
+      };
+
       return {
         access_token: tokens.access,
-        usuario: (await this.getPublicAuthUserById(result.user.id)) ?? {
-          id: result.user.id,
-          nombre: result.user.nombre,
-          nickname: result.user.nickname,
-          email: result.user.email,
-          rolGlobal: result.user.rolGlobal,
-          rol: 'negocio',
-          negocio: {
-            ...result.negocio,
-            horario: this.cleanHorarioForResponse(result.negocio.horario),
-            nenufarActivo:
-              result.negocio.nenufarActivo ?? result.negocio.nenufarAsset,
-          },
-        },
+        usuario: publicUser,
+        user: publicUser,
+        requiresEmailVerification: true,
+        emailVerification: this.buildEmailVerificationInfo(result.user.email),
       };
     } catch (error) {
       if (error instanceof AppError) {
@@ -1366,7 +1556,7 @@ export class AuthService {
     }
   }
 
-  async verifyEmail(dto: VerifyEmailDto) {
+  async verifyEmailToken(dto: VerifyEmailTokenDto) {
     const payload = await this.verifyOneTimeToken(dto.token, 'verify-email');
 
     const user = await this.prisma.usuario.update({
@@ -1374,6 +1564,9 @@ export class AuthService {
       data: {
         emailVerificado: true,
         verificadoEn: new Date(),
+        codigoVerificacionEmailHash: null,
+        codigoVerificacionEmailExpiraEn: null,
+        codigoVerificacionEmailIntentos: 0,
       },
       select: {
         id: true,
@@ -1383,7 +1576,155 @@ export class AuthService {
       },
     });
 
+    await this.sendWelcomeEmailIfNeeded(user.id);
+
     return { ok: true, usuario: user };
+  }
+
+  async verifyEmail(dto: VerifyEmailTokenDto) {
+    return this.verifyEmailToken(dto);
+  }
+
+  async verificarEmail(dto: VerifyEmailDto) {
+    const email = dto.email.trim().toLowerCase();
+    const user = await this.prisma.usuario.findUnique({
+      where: { email },
+      select: emailVerificationUserSelect,
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    if (user.emailVerificado) {
+      return {
+        ok: true,
+        message: 'Email ya verificado',
+        user: (await this.getPublicAuthUserById(user.id)) ?? {
+          id: user.id,
+          nombre: user.nombre,
+          nickname: user.nickname,
+          email: user.email,
+        },
+      };
+    }
+
+    if (
+      !user.codigoVerificacionEmailHash ||
+      !user.codigoVerificacionEmailExpiraEn
+    ) {
+      throw new BadRequestException('No hay código de verificación activo');
+    }
+
+    if (
+      user.codigoVerificacionEmailIntentos >=
+      EMAIL_VERIFICATION_MAX_ATTEMPTS
+    ) {
+      throw new HttpException(
+        'Demasiados intentos. Solicita un nuevo código.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    if (user.codigoVerificacionEmailExpiraEn.getTime() <= Date.now()) {
+      this.logger.warn(
+        `Código de verificación expirado usuario=${user.id} email=${this.maskEmail(user.email)} expiraEn=${user.codigoVerificacionEmailExpiraEn.toISOString()}`,
+      );
+      await this.prisma.usuario.update({
+        where: { id: user.id },
+        data: {
+          codigoVerificacionEmailHash: null,
+          codigoVerificacionEmailExpiraEn: null,
+          codigoVerificacionEmailIntentos: 0,
+        },
+      });
+      throw new BadRequestException('El código de verificación ha expirado');
+    }
+
+    const codeMatches = await this.emailVerificationCodeMatches(
+      dto.code,
+      user.codigoVerificacionEmailHash,
+    );
+
+    if (!codeMatches) {
+      const attempts = user.codigoVerificacionEmailIntentos + 1;
+      await this.prisma.usuario.update({
+        where: { id: user.id },
+        data: {
+          codigoVerificacionEmailIntentos: { increment: 1 },
+        },
+      });
+      this.logger.warn(
+        `Código de verificación incorrecto usuario=${user.id} email=${this.maskEmail(user.email)} attempts=${attempts}`,
+      );
+      throw new BadRequestException('Código de verificación incorrecto');
+    }
+
+    const verifiedUser = await this.prisma.usuario.update({
+      where: { id: user.id },
+      data: {
+        emailVerificado: true,
+        verificadoEn: new Date(),
+        codigoVerificacionEmailHash: null,
+        codigoVerificacionEmailExpiraEn: null,
+        codigoVerificacionEmailIntentos: 0,
+      },
+      select: authUserSelect,
+    });
+
+    this.logger.log(
+      `Email verificado correctamente usuario=${user.id} email=${this.maskEmail(user.email)}`,
+    );
+
+    await this.sendWelcomeEmailIfNeeded(user.id);
+
+    return {
+      ok: true,
+      message: 'Email verificado correctamente',
+      user: this.toPublicAuthUser(verifiedUser),
+    };
+  }
+
+  async reenviarCodigoEmail(dto: ResendEmailCodeDto) {
+    const email = dto.email.trim().toLowerCase();
+    const user = await this.prisma.usuario.findUnique({
+      where: { email },
+      select: emailVerificationUserSelect,
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+
+    if (user.emailVerificado) {
+      return {
+        ok: true,
+        message: 'El email ya está verificado',
+        email: this.maskEmail(user.email),
+      };
+    }
+
+    if (
+      user.codigoVerificacionEmailUltimoEnvioEn &&
+      Date.now() - user.codigoVerificacionEmailUltimoEnvioEn.getTime() <
+        EMAIL_VERIFICATION_RESEND_COOLDOWN_MS
+    ) {
+      throw new HttpException(
+        'Espera 60 segundos antes de pedir otro código',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    const expiresAt = await this.issueEmailVerificationCode(user);
+    this.logger.log(
+      `Código de verificación reenviado usuario=${user.id} email=${this.maskEmail(user.email)} expiraEn=${expiresAt.toISOString()}`,
+    );
+
+    return {
+      ok: true,
+      message: 'Código reenviado',
+      ...this.buildEmailVerificationInfo(user.email),
+    };
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {

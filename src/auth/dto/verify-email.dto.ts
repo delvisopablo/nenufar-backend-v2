@@ -1,10 +1,15 @@
 import { Transform } from 'class-transformer';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsString, Matches } from 'class-validator';
 
 export class VerifyEmailDto {
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsEmail()
+  email!: string;
+
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
-  @MinLength(10)
-  @MaxLength(2048)
-  token!: string;
+  @Matches(/^\d{6}$/)
+  code!: string;
 }

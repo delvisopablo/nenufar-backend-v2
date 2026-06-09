@@ -21,6 +21,8 @@ const allowedRouteMethods = new Set([
 const defaultAllowedOrigins = [
   'https://www.minenufar.com',
   'https://minenufar.com',
+  'https://nenufar.vercel.app',
+  'https://nenufar-delvisopablos-projects.vercel.app',
   'https://nenufar-git-main-delvisopablos-projects.vercel.app',
   'http://localhost:4200',
   'http://127.0.0.1:4200',

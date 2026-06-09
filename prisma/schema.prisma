@@ -165,12 +165,16 @@ model Usuario {
   actualizadoEn      DateTime     @updatedAt
   eliminadoEn        DateTime?
   biografia          String?
-  emailVerificado    Boolean      @default(false)
-  verificadoEn       DateTime?
-  ultimoLoginEn      DateTime?
-  welcomeEmailSentAt DateTime?
-  estadoCuenta       EstadoCuenta @default(ACTIVA)
-  rolGlobal          RolGlobal    @default(USUARIO)
+  emailVerificado                     Boolean      @default(false)
+  verificadoEn                        DateTime?
+  codigoVerificacionEmailHash         String?
+  codigoVerificacionEmailExpiraEn     DateTime?
+  codigoVerificacionEmailIntentos     Int          @default(0)
+  codigoVerificacionEmailUltimoEnvioEn DateTime?
+  ultimoLoginEn                       DateTime?
+  welcomeEmailSentAt                  DateTime?
+  estadoCuenta                        EstadoCuenta @default(ACTIVA)
+  rolGlobal                           RolGlobal    @default(USUARIO)
 
   // Economía de pétalos — separada conceptualmente del flujo transaccional real.
   // TODO: valorar mover PetaloTx a un schema/módulo propio para no contaminar queries de ventas.

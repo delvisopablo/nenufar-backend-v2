@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
-import { EmailService } from './email.service';
+import { AuthEmailWebhookService } from './auth-email-webhook.service';
 
 @Module({
-  providers: [EmailService],
-  exports: [EmailService],
+  providers: [AuthEmailWebhookService],
+  exports: [AuthEmailWebhookService],
 })
 export class EmailModule {}
