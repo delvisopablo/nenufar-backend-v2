@@ -182,7 +182,7 @@ type AuthUserRecord = Prisma.UsuarioGetPayload<{
 type RegisterUserRecord = Prisma.UsuarioGetPayload<{
   select: typeof registerUserSelect;
 }>;
-type EmailVerificationUserRecord = Prisma.UsuarioGetPayload<{
+export type EmailVerificationUserRecord = Prisma.UsuarioGetPayload<{
   select: typeof emailVerificationUserSelect;
 }>;
 type RegisterNegocioResult = {
@@ -1152,14 +1152,16 @@ export class AuthService {
       );
     }
 
-    let publicUser;
-    try {
-      publicUser =
-        (await this.getPublicAuthUserById(user.id)) ??
-        this.toBasicAuthUser(user);
-    } catch {
-      publicUser = this.toBasicAuthUser(user);
-    }
+    const publicUser = await (async () => {
+      try {
+        return (
+          (await this.getPublicAuthUserById(user.id)) ??
+          this.toBasicAuthUser(user)
+        );
+      } catch {
+        return this.toBasicAuthUser(user);
+      }
+    })();
 
     this.logger.log(`[registro] registro completado id=${user.id}`);
 
@@ -1168,7 +1170,9 @@ export class AuthService {
       usuario: publicUser,
       user: publicUser,
       requiresEmailVerification: true,
-      ...(emailVerificationInfo ? { emailVerification: emailVerificationInfo } : {}),
+      ...(emailVerificationInfo
+        ? { emailVerification: emailVerificationInfo }
+        : {}),
     };
   }
 
@@ -1664,8 +1668,7 @@ export class AuthService {
     }
 
     if (
-      user.codigoVerificacionEmailIntentos >=
-      EMAIL_VERIFICATION_MAX_ATTEMPTS
+      user.codigoVerificacionEmailIntentos >= EMAIL_VERIFICATION_MAX_ATTEMPTS
     ) {
       throw new HttpException(
         'Demasiados intentos. Solicita un nuevo código.',
