@@ -1078,10 +1078,15 @@ export class AuthService {
       throw new ConflictException('Email o nickname ya en uso');
     }
 
+    // Fail-fast: validar secrets JWT antes de crear el usuario para que un
+    // error de configuración no deje al usuario creado sin poder iniciar sesión.
+    this.getJwtSecrets();
+
     const hash = await bcrypt.hash(dto.password, 10);
 
+    let user: RegisterUserRecord;
     try {
-      const user = await this.prisma.usuario.create({
+      user = await this.prisma.usuario.create({
         data: {
           nombre: normalizedName,
           nickname: normalizedNickname,
@@ -1096,44 +1101,6 @@ export class AuthService {
         },
         select: registerUserSelect,
       });
-
-      if (normalizedCodigoReferido) {
-        try {
-          await this.nenufarizarService.procesarReferido(
-            user.id,
-            normalizedCodigoReferido,
-          );
-        } catch (error) {
-          this.logger.error(
-            `Fallo procesando referido ${normalizedCodigoReferido} para el usuario ${user.id}. El registro continúa.`,
-            error instanceof Error ? error.stack : undefined,
-          );
-        }
-      }
-
-      const tokens = await this.signTokens({
-        id: user.id,
-        email: user.email,
-        nickname: user.nickname,
-        rolGlobal: user.rolGlobal,
-      });
-
-      this.setSessionCookies(res, tokens, 'registro');
-      this.logger.log(`[registro] usuario creado id=${user.id}`);
-
-      await this.issueEmailVerificationCode(user);
-
-      const publicUser =
-        (await this.getPublicAuthUserById(user.id)) ??
-        this.toBasicAuthUser(user);
-
-      return {
-        access_token: tokens.access,
-        usuario: publicUser,
-        user: publicUser,
-        requiresEmailVerification: true,
-        emailVerification: this.buildEmailVerificationInfo(user.email),
-      };
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -1143,6 +1110,66 @@ export class AuthService {
       }
       throw error;
     }
+
+    this.logger.log(`[registro] usuario creado id=${user.id}`);
+
+    // Código referido — operación secundaria, no bloquea el registro
+    if (normalizedCodigoReferido) {
+      try {
+        await this.nenufarizarService.procesarReferido(
+          user.id,
+          normalizedCodigoReferido,
+        );
+      } catch (error) {
+        this.logger.error(
+          `[registro] Fallo procesando referido ${normalizedCodigoReferido} para usuario ${user.id}. El registro continúa.`,
+          error instanceof Error ? error.stack : undefined,
+        );
+      }
+    }
+
+    const tokens = await this.signTokens({
+      id: user.id,
+      email: user.email,
+      nickname: user.nickname,
+      rolGlobal: user.rolGlobal,
+    });
+
+    this.setSessionCookies(res, tokens, 'registro');
+
+    // Email/n8n — operación secundaria, no bloquea el registro
+    let emailVerificationInfo:
+      | ReturnType<typeof this.buildEmailVerificationInfo>
+      | undefined;
+
+    try {
+      await this.issueEmailVerificationCode(user);
+      emailVerificationInfo = this.buildEmailVerificationInfo(user.email);
+    } catch (emailError) {
+      this.logger.warn(
+        `[registro] Fallo al emitir código de verificación para usuario ${user.id}. El registro sigue siendo válido.`,
+        emailError instanceof Error ? emailError.stack : undefined,
+      );
+    }
+
+    let publicUser;
+    try {
+      publicUser =
+        (await this.getPublicAuthUserById(user.id)) ??
+        this.toBasicAuthUser(user);
+    } catch {
+      publicUser = this.toBasicAuthUser(user);
+    }
+
+    this.logger.log(`[registro] registro completado id=${user.id}`);
+
+    return {
+      access_token: tokens.access,
+      usuario: publicUser,
+      user: publicUser,
+      requiresEmailVerification: true,
+      ...(emailVerificationInfo ? { emailVerification: emailVerificationInfo } : {}),
+    };
   }
 
   async registerNegocio(dto: RegisterNegocioDto, res: Response) {
@@ -1393,7 +1420,21 @@ export class AuthService {
         `[registro-negocio] usuario id=${result.user.id} negocio id=${result.negocio.id}`,
       );
 
-      await this.issueEmailVerificationCode(result.user);
+      let emailVerificationInfoNegocio:
+        | ReturnType<typeof this.buildEmailVerificationInfo>
+        | undefined;
+
+      try {
+        await this.issueEmailVerificationCode(result.user);
+        emailVerificationInfoNegocio = this.buildEmailVerificationInfo(
+          result.user.email,
+        );
+      } catch (emailError) {
+        this.logger.warn(
+          `[registro-negocio] Fallo al emitir código de verificación para usuario ${result.user.id}. El registro sigue siendo válido.`,
+          emailError instanceof Error ? emailError.stack : undefined,
+        );
+      }
 
       const publicUser = (await this.getPublicAuthUserById(result.user.id)) ?? {
         id: result.user.id,
@@ -1410,12 +1451,18 @@ export class AuthService {
         },
       };
 
+      this.logger.log(
+        `[registro-negocio] respuesta 201 enviada usuario id=${result.user.id}`,
+      );
+
       return {
         access_token: tokens.access,
         usuario: publicUser,
         user: publicUser,
         requiresEmailVerification: true,
-        emailVerification: this.buildEmailVerificationInfo(result.user.email),
+        ...(emailVerificationInfoNegocio
+          ? { emailVerification: emailVerificationInfoNegocio }
+          : {}),
       };
     } catch (error) {
       if (error instanceof AppError) {
