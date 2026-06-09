@@ -649,14 +649,19 @@ export class AuthService {
 
   private logSessionCookies(
     action: 'login' | 'refresh' | 'registro' | 'registro-negocio',
-    tokens: Awaited<ReturnType<AuthService['signTokens']>>,
   ) {
     const cookieOptions = this.getCookieBaseOptions();
     const domainLabel = cookieOptions.domain ?? 'host-only';
 
-    this.logger.debug(
-      `[${action}] cookies seteadas access=${this.maskToken(tokens.access)} refresh=${this.maskToken(tokens.refresh)} secure=${String(cookieOptions.secure)} sameSite=${String(cookieOptions.sameSite)} domain=${domainLabel}`,
+    this.logger.log(
+      `[${action}] cookies seteadas nombre=access_token,refresh_token secure=${String(cookieOptions.secure)} sameSite=${String(cookieOptions.sameSite)} domain=${domainLabel}`,
     );
+
+    if (cookieOptions.domain) {
+      this.logger.warn(
+        `[${action}] COOKIE_DOMAIN="${cookieOptions.domain}" configurado. Si el backend NO sirve desde ese dominio (p. ej. esta en railway.app), el navegador rechazará las cookies. Elimina la variable COOKIE_DOMAIN en Railway para que queden como host-only.`,
+      );
+    }
   }
 
   private async verifySessionToken(token: string, type: SessionTokenType) {
@@ -763,7 +768,7 @@ export class AuthService {
     );
 
     if (action) {
-      this.logSessionCookies(action, tokens);
+      this.logSessionCookies(action);
     }
   }
 
@@ -1019,6 +1024,15 @@ export class AuthService {
         `Webhook de welcome email enviado correctamente al usuario ${userId}`,
       );
     } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2022'
+      ) {
+        this.logger.warn(
+          `[sendWelcomeEmail] Columna welcomeEmailSentAt no existe en la BD para usuario ${userId}. Ejecuta: npx prisma migrate deploy`,
+        );
+        return;
+      }
       this.logger.error(
         `Fallo notificando welcome email al usuario ${userId}. El flujo continúa y welcomeEmailSentAt no se marca.`,
         error instanceof Error ? error.stack : undefined,
@@ -1538,6 +1552,7 @@ export class AuthService {
     );
 
     this.setSessionCookies(res, tokens, 'login');
+    this.logger.log(`[login] login correcto user=${user.id}`);
 
     await this.prisma.usuario
       .update({
@@ -1586,6 +1601,18 @@ export class AuthService {
         payload = await this.resolveRequestUser(req, 'access');
       } catch (accessError) {
         if (!this.shouldTryRefreshAfterAccessError(accessError)) {
+          const hasToken = Boolean(
+            req.cookies?.access_token ??
+              req.cookies?.accessToken ??
+              req.headers.authorization,
+          );
+          if (!hasToken) {
+            this.logger.warn(
+              '[me] cookie access_token ausente - no hay token en cookies ni Authorization header',
+            );
+          } else {
+            this.logger.warn('[me] token inválido o expirado');
+          }
           throw accessError;
         }
 
@@ -1598,6 +1625,7 @@ export class AuthService {
         throw new UnauthorizedException();
       }
 
+      this.logger.log(`[me] usuario autenticado user=${payload.id}`);
       return user;
     } catch (error) {
       if (error instanceof UnauthorizedException) {
