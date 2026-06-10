@@ -66,6 +66,24 @@ describe('AuthEmailWebhookService', () => {
     });
   });
 
+  it('construye el payload de bienvenida para negocios en n8n', () => {
+    expect(
+      service.buildBusinessWelcomePayload({
+        email: 'carmen@negocio.com',
+        name: ' Carmen ',
+        businessName: ' Cafe Demo ',
+      }),
+    ).toEqual({
+      eventType: 'business_welcome',
+      email: 'carmen@negocio.com',
+      name: 'Carmen',
+      businessName: 'Cafe Demo',
+      appName: 'Nenúfar',
+      loginUrl: 'https://app.nenufar.test/login',
+      supportEmail: 'soporte@nenufar.test',
+    });
+  });
+
   it('construye el payload de código de confirmación para n8n', () => {
     expect(
       service.buildConfirmationCodePayload({
@@ -101,6 +119,36 @@ describe('AuthEmailWebhookService', () => {
           loginUrl: 'https://app.nenufar.test/login',
           supportEmail: 'soporte@nenufar.test',
         }),
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it('envía business_welcome al webhook de n8n', async () => {
+    await service.sendBusinessWelcomeEmail(
+      'carmen@negocio.com',
+      'Carmen',
+      'Cafe Demo',
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://n8n.example.test/webhook/auth-email',
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          eventType: 'business_welcome',
+          email: 'carmen@negocio.com',
+          name: 'Carmen',
+          businessName: 'Cafe Demo',
+          appName: 'Nenúfar',
+          loginUrl: 'https://app.nenufar.test/login',
+          supportEmail: 'soporte@nenufar.test',
+        }),
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         signal: expect.any(AbortSignal),
       }),
     );
@@ -129,11 +177,7 @@ describe('AuthEmailWebhookService', () => {
     fetchMock.mockRejectedValueOnce(new Error('network down'));
 
     await expect(
-      service.sendConfirmationCode(
-        'ada@example.com',
-        'Ada',
-        '123456',
-      ),
+      service.sendConfirmationCode('ada@example.com', 'Ada', '123456'),
     ).resolves.toBe(false);
 
     expect(loggerErrorSpy).toHaveBeenCalledWith(

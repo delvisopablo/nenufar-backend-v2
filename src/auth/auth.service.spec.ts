@@ -17,6 +17,15 @@ import { AuthEmailWebhookService } from '../email/auth-email-webhook.service';
 import { NenufarizarService } from '../nenufarizar/nenufarizar.service';
 
 type TransactionCallback = (tx: unknown) => PromiseLike<unknown>;
+type AuthServiceSpecHarness = {
+  generateEmailVerificationCode: () => string;
+  hashEmailVerificationCode: (code: string) => string;
+  logger: Pick<Logger, 'error' | 'warn'>;
+};
+
+function specHarness(service: AuthService) {
+  return service as unknown as AuthServiceSpecHarness;
+}
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -56,6 +65,7 @@ describe('AuthService', () => {
   let authEmailWebhookService: {
     isEnabled: jest.Mock;
     sendWelcomeEmail: jest.Mock;
+    sendBusinessWelcomeEmail: jest.Mock;
     sendConfirmationCode: jest.Mock;
   };
   let nenufarizarService: {
@@ -108,6 +118,7 @@ describe('AuthService', () => {
     authEmailWebhookService = {
       isEnabled: jest.fn().mockReturnValue(false),
       sendWelcomeEmail: jest.fn(),
+      sendBusinessWelcomeEmail: jest.fn(),
       sendConfirmationCode: jest.fn(),
     };
     nenufarizarService = {
@@ -250,9 +261,7 @@ describe('AuthService', () => {
       'Ada',
       expect.stringMatching(/^\d{6}$/),
     );
-    expect(
-      prisma.usuario.create.mock.invocationCallOrder[0],
-    ).toBeLessThan(
+    expect(prisma.usuario.create.mock.invocationCallOrder[0]).toBeLessThan(
       authEmailWebhookService.sendConfirmationCode.mock.invocationCallOrder[0],
     );
     expect(prisma.usuario.update).toHaveBeenCalledWith({
@@ -284,7 +293,7 @@ describe('AuthService', () => {
 
   it('register genera un código nuevo para cada usuario registrado', async () => {
     const generateSpy = jest
-      .spyOn(service as any, 'generateEmailVerificationCode')
+      .spyOn(specHarness(service), 'generateEmailVerificationCode')
       .mockReturnValueOnce('222222')
       .mockReturnValueOnce('333333');
     authEmailWebhookService.sendConfirmationCode.mockResolvedValue(true);
@@ -331,18 +340,12 @@ describe('AuthService', () => {
       { cookie: jest.fn() } as any,
     );
 
-    expect(authEmailWebhookService.sendConfirmationCode).toHaveBeenNthCalledWith(
-      1,
-      'ada@example.com',
-      'Ada',
-      '222222',
-    );
-    expect(authEmailWebhookService.sendConfirmationCode).toHaveBeenNthCalledWith(
-      2,
-      'grace@example.com',
-      'Grace',
-      '333333',
-    );
+    expect(
+      authEmailWebhookService.sendConfirmationCode,
+    ).toHaveBeenNthCalledWith(1, 'ada@example.com', 'Ada', '222222');
+    expect(
+      authEmailWebhookService.sendConfirmationCode,
+    ).toHaveBeenNthCalledWith(2, 'grace@example.com', 'Grace', '333333');
     expect(
       authEmailWebhookService.sendConfirmationCode.mock.calls[0][2],
     ).not.toBe(authEmailWebhookService.sendConfirmationCode.mock.calls[1][2]);
@@ -355,7 +358,7 @@ describe('AuthService', () => {
       new Error('n8n failed'),
     );
     const loggerError = jest
-      .spyOn((service as any).logger, 'error')
+      .spyOn(specHarness(service).logger, 'error')
       .mockImplementation(() => undefined);
     prisma.usuario.findFirst.mockResolvedValue(null);
     prisma.usuario.create.mockResolvedValue({
@@ -484,7 +487,7 @@ describe('AuthService', () => {
       new Error('invalid code'),
     );
     const loggerError = jest
-      .spyOn((service as any).logger, 'error')
+      .spyOn(specHarness(service).logger, 'error')
       .mockImplementation(() => undefined);
 
     const result = await service.register(
@@ -1181,8 +1184,10 @@ describe('AuthService', () => {
       .mockResolvedValueOnce({
         id: 7,
         nombre: 'Ada',
+        nickname: 'ada',
         email: 'ada@example.com',
         emailVerificado: true,
+        negocios: [],
         welcomeEmailSentAt: new Date('2026-04-01T10:00:00.000Z'),
       });
     prisma.usuario.update.mockResolvedValue({});
@@ -1226,8 +1231,10 @@ describe('AuthService', () => {
       .mockResolvedValueOnce({
         id: 7,
         nombre: 'Ada',
+        nickname: 'ada',
         email: 'ada@example.com',
         emailVerificado: true,
+        negocios: [],
         welcomeEmailSentAt: null,
       })
       .mockResolvedValueOnce({
@@ -1254,7 +1261,7 @@ describe('AuthService', () => {
       new Error('n8n failed'),
     );
     const loggerError = jest
-      .spyOn((service as any).logger, 'error')
+      .spyOn(specHarness(service).logger, 'error')
       .mockImplementation(() => undefined);
 
     const result = await service.login(
@@ -1365,7 +1372,7 @@ describe('AuthService', () => {
   it('verificarEmail valida el código, marca emailVerificado y envía welcome', async () => {
     authEmailWebhookService.isEnabled.mockReturnValue(true);
     authEmailWebhookService.sendWelcomeEmail.mockResolvedValue(true);
-    const codeHash = (service as any).hashEmailVerificationCode('123456');
+    const codeHash = specHarness(service).hashEmailVerificationCode('123456');
     prisma.usuario.findUnique
       .mockResolvedValueOnce({
         id: 7,
@@ -1381,8 +1388,10 @@ describe('AuthService', () => {
       .mockResolvedValueOnce({
         id: 7,
         nombre: 'Ada',
+        nickname: 'ada',
         email: 'ada@example.com',
         emailVerificado: true,
+        negocios: [],
         welcomeEmailSentAt: null,
       });
     prisma.usuario.update.mockResolvedValueOnce({
@@ -1436,10 +1445,152 @@ describe('AuthService', () => {
     );
   });
 
+  it('verificarEmail envía business_welcome para usuarios con negocio', async () => {
+    authEmailWebhookService.isEnabled.mockReturnValue(true);
+    authEmailWebhookService.sendBusinessWelcomeEmail.mockResolvedValue(true);
+    const codeHash = specHarness(service).hashEmailVerificationCode('123456');
+    const negocio = { id: 3, nombre: 'Cafe Demo' };
+    prisma.usuario.findUnique
+      .mockResolvedValueOnce({
+        id: 9,
+        nombre: 'Carmen',
+        nickname: 'carmen',
+        email: 'carmen@negocio.com',
+        emailVerificado: false,
+        codigoVerificacionEmailHash: codeHash,
+        codigoVerificacionEmailExpiraEn: new Date(Date.now() + 60_000),
+        codigoVerificacionEmailIntentos: 0,
+        codigoVerificacionEmailUltimoEnvioEn: new Date(),
+      })
+      .mockResolvedValueOnce({
+        id: 9,
+        nombre: 'Carmen',
+        nickname: 'carmen',
+        email: 'carmen@negocio.com',
+        emailVerificado: true,
+        negocios: [negocio],
+        welcomeEmailSentAt: null,
+      });
+    prisma.usuario.update.mockResolvedValueOnce({
+      id: 9,
+      nombre: 'Carmen',
+      nickname: 'carmen',
+      email: 'carmen@negocio.com',
+      foto: null,
+      biografia: null,
+      creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+      actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+      emailVerificado: true,
+      estadoCuenta: EstadoCuenta.ACTIVA,
+      eliminadoEn: null,
+      rolGlobal: RolGlobal.USUARIO,
+      petalosSaldo: 0,
+      negocios: [negocio],
+    });
+    prisma.usuario.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.verificarEmail({
+      email: 'carmen@negocio.com',
+      code: '123456',
+    });
+
+    expect(
+      authEmailWebhookService.sendBusinessWelcomeEmail,
+    ).toHaveBeenCalledWith('carmen@negocio.com', 'Carmen', 'Cafe Demo');
+    expect(authEmailWebhookService.sendWelcomeEmail).not.toHaveBeenCalled();
+    expect(prisma.usuario.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 9, welcomeEmailSentAt: null },
+        data: { welcomeEmailSentAt: expect.any(Date) },
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: true,
+        user: expect.objectContaining({
+          id: 9,
+          email: 'carmen@negocio.com',
+          rol: 'negocio',
+          negocio: expect.objectContaining({ id: 3, nombre: 'Cafe Demo' }),
+        }),
+      }),
+    );
+  });
+
+  it('verificarEmail no se rompe si falla business_welcome y no marca welcomeEmailSentAt', async () => {
+    authEmailWebhookService.isEnabled.mockReturnValue(true);
+    authEmailWebhookService.sendBusinessWelcomeEmail.mockRejectedValue(
+      new Error('n8n down'),
+    );
+    const loggerError = jest
+      .spyOn(specHarness(service).logger, 'error')
+      .mockImplementation(() => undefined);
+    const codeHash = specHarness(service).hashEmailVerificationCode('123456');
+    const negocio = { id: 4, nombre: 'Tienda Demo' };
+    prisma.usuario.findUnique
+      .mockResolvedValueOnce({
+        id: 10,
+        nombre: 'Ines',
+        nickname: 'ines',
+        email: 'ines@negocio.com',
+        emailVerificado: false,
+        codigoVerificacionEmailHash: codeHash,
+        codigoVerificacionEmailExpiraEn: new Date(Date.now() + 60_000),
+        codigoVerificacionEmailIntentos: 0,
+        codigoVerificacionEmailUltimoEnvioEn: new Date(),
+      })
+      .mockResolvedValueOnce({
+        id: 10,
+        nombre: 'Ines',
+        nickname: 'ines',
+        email: 'ines@negocio.com',
+        emailVerificado: true,
+        negocios: [negocio],
+        welcomeEmailSentAt: null,
+      });
+    prisma.usuario.update.mockResolvedValueOnce({
+      id: 10,
+      nombre: 'Ines',
+      nickname: 'ines',
+      email: 'ines@negocio.com',
+      foto: null,
+      biografia: null,
+      creadoEn: new Date('2026-01-01T00:00:00.000Z'),
+      actualizadoEn: new Date('2026-01-02T00:00:00.000Z'),
+      emailVerificado: true,
+      estadoCuenta: EstadoCuenta.ACTIVA,
+      eliminadoEn: null,
+      rolGlobal: RolGlobal.USUARIO,
+      petalosSaldo: 0,
+      negocios: [negocio],
+    });
+
+    const result = await service.verificarEmail({
+      email: 'ines@negocio.com',
+      code: '123456',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: true,
+        message: 'Email verificado correctamente',
+      }),
+    );
+    expect(
+      authEmailWebhookService.sendBusinessWelcomeEmail,
+    ).toHaveBeenCalledWith('ines@negocio.com', 'Ines', 'Tienda Demo');
+    expect(prisma.usuario.updateMany).not.toHaveBeenCalled();
+    expect(loggerError).toHaveBeenCalledWith(
+      expect.stringContaining('Fallo notificando business_welcome email'),
+      expect.any(String),
+    );
+    loggerError.mockRestore();
+  });
+
   it('verificarEmail incrementa intentos si el código es incorrecto', async () => {
-    const codeHash = (service as any).hashEmailVerificationCode('123456');
+    const codeHash = specHarness(service).hashEmailVerificationCode('123456');
     const loggerWarn = jest
-      .spyOn((service as any).logger, 'warn')
+      .spyOn(specHarness(service).logger, 'warn')
       .mockImplementation(() => undefined);
     prisma.usuario.findUnique.mockResolvedValue({
       id: 7,
@@ -1515,9 +1666,9 @@ describe('AuthService', () => {
   });
 
   it('reenviarCodigoEmail no reutiliza el código anterior si se vuelve a generar igual', async () => {
-    const oldHash = (service as any).hashEmailVerificationCode('222222');
+    const oldHash = specHarness(service).hashEmailVerificationCode('222222');
     const generateSpy = jest
-      .spyOn(service as any, 'generateEmailVerificationCode')
+      .spyOn(specHarness(service), 'generateEmailVerificationCode')
       .mockReturnValueOnce('222222')
       .mockReturnValueOnce('333333');
     authEmailWebhookService.sendConfirmationCode.mockResolvedValue(true);
@@ -1545,12 +1696,10 @@ describe('AuthService', () => {
       '333333',
     );
     expect(
-      prisma.usuario.update.mock.calls[0][0].data
-        .codigoVerificacionEmailHash,
-    ).toBe((service as any).hashEmailVerificationCode('333333'));
+      prisma.usuario.update.mock.calls[0][0].data.codigoVerificacionEmailHash,
+    ).toBe(specHarness(service).hashEmailVerificationCode('333333'));
     expect(
-      prisma.usuario.update.mock.calls[0][0].data
-        .codigoVerificacionEmailHash,
+      prisma.usuario.update.mock.calls[0][0].data.codigoVerificacionEmailHash,
     ).not.toBe(oldHash);
 
     generateSpy.mockRestore();

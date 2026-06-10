@@ -159,9 +159,19 @@ const loginUserSelect = {
 const welcomeEmailUserSelect = {
   id: true,
   nombre: true,
+  nickname: true,
   email: true,
   emailVerificado: true,
   welcomeEmailSentAt: true,
+  negocios: {
+    where: { activo: true, eliminadoEn: null },
+    orderBy: { creadoEn: 'asc' },
+    take: 1,
+    select: {
+      id: true,
+      nombre: true,
+    },
+  },
 } satisfies Prisma.UsuarioSelect;
 
 const emailVerificationUserSelect = {
@@ -185,6 +195,9 @@ type RegisterUserRecord = Prisma.UsuarioGetPayload<{
 }>;
 export type EmailVerificationUserRecord = Prisma.UsuarioGetPayload<{
   select: typeof emailVerificationUserSelect;
+}>;
+type WelcomeEmailUserRecord = Prisma.UsuarioGetPayload<{
+  select: typeof welcomeEmailUserSelect;
 }>;
 type RegisterNegocioResult = {
   user: {
@@ -919,7 +932,30 @@ export class AuthService {
     nombre?: string | null;
     nickname?: string | null;
   }) {
+    return this.getWelcomeDisplayName(user);
+  }
+
+  private getWelcomeDisplayName(user: {
+    nombre?: string | null;
+    nickname?: string | null;
+  }) {
     return user.nombre?.trim() || user.nickname?.trim() || 'Nenúfar';
+  }
+
+  private getBusinessWelcomeName(
+    user: Pick<WelcomeEmailUserRecord, 'nombre' | 'nickname'>,
+    negocio: WelcomeEmailUserRecord['negocios'][number] | null,
+  ) {
+    return (
+      negocio?.nombre?.trim() ||
+      user.nombre?.trim() ||
+      user.nickname?.trim() ||
+      'Tu negocio'
+    );
+  }
+
+  private formatLogValue(value: string) {
+    return value.length > 80 ? `${value.slice(0, 77)}...` : value;
   }
 
   private async issueEmailVerificationCode(user: {
@@ -983,6 +1019,8 @@ export class AuthService {
       return;
     }
 
+    let attemptedEventType: 'welcome' | 'business_welcome' = 'welcome';
+
     try {
       const user = await this.prisma.usuario.findUnique({
         where: { id: userId },
@@ -1007,12 +1045,36 @@ export class AuthService {
         return;
       }
 
-      const sent = await this.authEmailWebhookService.sendWelcomeEmail(
-        user.email,
-        user.nombre,
-      );
+      const negocio = user.negocios[0] ?? null;
+      const displayName = this.getWelcomeDisplayName(user);
+      const eventType = negocio ? 'business_welcome' : 'welcome';
+      let sent: boolean;
+      attemptedEventType = eventType;
+
+      if (negocio) {
+        const businessName = this.getBusinessWelcomeName(user, negocio);
+        this.logger.log(
+          `Detectado usuario con rol negocio usuario=${user.id} negocio=${negocio.id}`,
+        );
+        this.logger.log(
+          `Enviando business_welcome a n8n usuario=${user.id} businessName="${this.formatLogValue(businessName)}"`,
+        );
+        sent = await this.authEmailWebhookService.sendBusinessWelcomeEmail(
+          user.email,
+          displayName,
+          businessName,
+        );
+      } else {
+        sent = await this.authEmailWebhookService.sendWelcomeEmail(
+          user.email,
+          displayName,
+        );
+      }
 
       if (!sent) {
+        this.logger.warn(
+          `No se pudo notificar ${eventType} por n8n para usuario ${user.id}. El flujo continúa.`,
+        );
         return;
       }
 
@@ -1032,7 +1094,7 @@ export class AuthService {
       }
 
       this.logger.log(
-        `Webhook de welcome email enviado correctamente al usuario ${userId}`,
+        `Webhook de ${eventType} email enviado correctamente al usuario ${userId}`,
       );
     } catch (error) {
       if (
@@ -1045,7 +1107,7 @@ export class AuthService {
         return;
       }
       this.logger.error(
-        `Fallo notificando welcome email al usuario ${userId}. El flujo continúa y welcomeEmailSentAt no se marca.`,
+        `Fallo notificando ${attemptedEventType} email al usuario ${userId}. El flujo continúa y welcomeEmailSentAt no se marca.`,
         error instanceof Error ? error.stack : undefined,
       );
     }

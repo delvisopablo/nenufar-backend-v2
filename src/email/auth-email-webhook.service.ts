@@ -1,11 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-type AuthEmailEventType = 'welcome' | 'confirmation_code';
+type AuthEmailEventType = 'welcome' | 'confirmation_code' | 'business_welcome';
 
 export type WelcomeAuthEmailPayload = {
   eventType: 'welcome';
   email: string;
   name: string;
+  appName: string;
+  loginUrl: string;
+  supportEmail?: string;
+};
+
+export type BusinessWelcomeAuthEmailPayload = {
+  eventType: 'business_welcome';
+  email: string;
+  name: string;
+  businessName: string;
   appName: string;
   loginUrl: string;
   supportEmail?: string;
@@ -22,6 +32,7 @@ export type ConfirmationCodeAuthEmailPayload = {
 
 type AuthEmailPayload =
   | WelcomeAuthEmailPayload
+  | BusinessWelcomeAuthEmailPayload
   | ConfirmationCodeAuthEmailPayload;
 
 type SendOptions = {
@@ -74,6 +85,24 @@ export class AuthEmailWebhookService {
     };
   }
 
+  buildBusinessWelcomePayload(input: {
+    email: string;
+    name?: string | null;
+    businessName?: string | null;
+  }): BusinessWelcomeAuthEmailPayload {
+    const name = this.normalizeName(input.name);
+
+    return {
+      eventType: 'business_welcome',
+      email: input.email,
+      name,
+      businessName: this.normalizeBusinessName(input.businessName, name),
+      appName: this.getAppName(),
+      loginUrl: this.getLoginUrl(),
+      ...this.getSupportEmailPayload(),
+    };
+  }
+
   async sendWelcomeEmail(
     email: string,
     name?: string | null,
@@ -81,6 +110,18 @@ export class AuthEmailWebhookService {
   ) {
     return this.postAuthEmailEvent(
       this.buildWelcomePayload({ email, name }),
+      options,
+    );
+  }
+
+  async sendBusinessWelcomeEmail(
+    email: string,
+    name?: string | null,
+    businessName?: string | null,
+    options: SendOptions = {},
+  ) {
+    return this.postAuthEmailEvent(
+      this.buildBusinessWelcomePayload({ email, name, businessName }),
       options,
     );
   }
@@ -138,7 +179,9 @@ export class AuthEmailWebhookService {
     } catch (error) {
       this.logger.error(
         `Fallo notificando webhook n8n auth email eventType=${payload.eventType} email=${this.maskEmail(payload.email)}. ${
-          options.required ? 'El flujo requiere este envío.' : 'El flujo continúa.'
+          options.required
+            ? 'El flujo requiere este envío.'
+            : 'El flujo continúa.'
         }`,
         error instanceof Error ? error.stack : undefined,
       );
@@ -184,6 +227,13 @@ export class AuthEmailWebhookService {
 
   private normalizeName(name?: string | null) {
     return name?.trim() || '';
+  }
+
+  private normalizeBusinessName(
+    businessName?: string | null,
+    fallbackName?: string,
+  ) {
+    return businessName?.trim() || fallbackName?.trim() || 'Tu negocio';
   }
 
   private maskEmail(email: string) {
