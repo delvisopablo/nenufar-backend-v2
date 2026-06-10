@@ -1,0 +1,2 @@
+ALTER TABLE "Usuario"
+ADD COLUMN IF NOT EXISTS "welcomeEmailSentAt" TIMESTAMP(3);
