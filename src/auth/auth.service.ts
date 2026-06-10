@@ -170,6 +170,7 @@ const emailVerificationUserSelect = {
   nickname: true,
   email: true,
   emailVerificado: true,
+  rolGlobal: true,
   codigoVerificacionEmailHash: true,
   codigoVerificacionEmailExpiraEn: true,
   codigoVerificacionEmailIntentos: true,
@@ -648,7 +649,12 @@ export class AuthService {
   }
 
   private logSessionCookies(
-    action: 'login' | 'refresh' | 'registro' | 'registro-negocio',
+    action:
+      | 'login'
+      | 'refresh'
+      | 'registro'
+      | 'registro-negocio'
+      | 'verificar-email',
   ) {
     const cookieOptions = this.getCookieBaseOptions();
     const domainLabel = cookieOptions.domain ?? 'host-only';
@@ -754,7 +760,12 @@ export class AuthService {
   private setSessionCookies(
     res: Response,
     tokens: Awaited<ReturnType<AuthService['signTokens']>>,
-    action?: 'login' | 'refresh' | 'registro' | 'registro-negocio',
+    action?:
+      | 'login'
+      | 'refresh'
+      | 'registro'
+      | 'registro-negocio'
+      | 'verificar-email',
   ) {
     res.cookie(
       'access_token',
@@ -1077,7 +1088,8 @@ export class AuthService {
       dto.codigoReferido,
     )?.toUpperCase();
 
-    const exists = await this.prisma.usuario.findFirst({
+    // Check existing user — handle unverified email without disclosing existence
+    const existente = await this.prisma.usuario.findFirst({
       where: {
         OR: [{ email: normalizedEmail }, { nickname: normalizedNickname }],
       },
@@ -1085,16 +1097,34 @@ export class AuthService {
         id: true,
         email: true,
         nickname: true,
+        emailVerificado: true,
+        codigoVerificacionEmailHash: true,
       },
     });
 
-    if (exists) {
+    if (existente) {
+      if (existente.email === normalizedEmail && !existente.emailVerificado) {
+        await this.issueEmailVerificationCode({
+          id: existente.id,
+          email: existente.email,
+          nombre: null,
+          nickname: null,
+          codigoVerificacionEmailHash: existente.codigoVerificacionEmailHash,
+        });
+        this.logger.log(
+          `[registro] email pendiente de verificación, código reenviado usuario=${existente.id}`,
+        );
+        return {
+          ok: true,
+          requiresEmailVerification: true,
+          message:
+            'Ya tenías una cuenta pendiente. Te hemos reenviado el código.',
+          emailVerification: this.buildEmailVerificationInfo(normalizedEmail),
+        };
+      }
+
       throw new ConflictException('Email o nickname ya en uso');
     }
-
-    // Fail-fast: validar secrets JWT antes de crear el usuario para que un
-    // error de configuración no deje al usuario creado sin poder iniciar sesión.
-    this.getJwtSecrets();
 
     const hash = await bcrypt.hash(dto.password, 10);
 
@@ -1142,16 +1172,7 @@ export class AuthService {
       }
     }
 
-    const tokens = await this.signTokens({
-      id: user.id,
-      email: user.email,
-      nickname: user.nickname,
-      rolGlobal: user.rolGlobal,
-    });
-
-    this.setSessionCookies(res, tokens, 'registro');
-
-    // Email/n8n — operación secundaria, no bloquea el registro
+    // Do NOT set session cookies — user must confirm email first
     let emailVerificationInfo:
       | ReturnType<typeof this.buildEmailVerificationInfo>
       | undefined;
@@ -1166,23 +1187,13 @@ export class AuthService {
       );
     }
 
-    const publicUser = await (async () => {
-      try {
-        return (
-          (await this.getPublicAuthUserById(user.id)) ??
-          this.toBasicAuthUser(user)
-        );
-      } catch {
-        return this.toBasicAuthUser(user);
-      }
-    })();
-
     this.logger.log(`[registro] registro completado id=${user.id}`);
 
+    // res no se usa aquí: las cookies se establecen en verificarEmail()
+    void res;
+
     return {
-      access_token: tokens.access,
-      usuario: publicUser,
-      user: publicUser,
+      ok: true,
       requiresEmailVerification: true,
       ...(emailVerificationInfo
         ? { emailVerification: emailVerificationInfo }
@@ -1426,14 +1437,6 @@ export class AuthService {
         },
       );
 
-      const tokens = await this.signTokens({
-        id: result.user.id,
-        email: result.user.email,
-        nickname: result.user.nickname,
-        rolGlobal: result.user.rolGlobal,
-      });
-
-      this.setSessionCookies(res, tokens, 'registro-negocio');
       this.logger.log(
         `[registro-negocio] usuario id=${result.user.id} negocio id=${result.negocio.id}`,
       );
@@ -1454,29 +1457,15 @@ export class AuthService {
         );
       }
 
-      const publicUser = (await this.getPublicAuthUserById(result.user.id)) ?? {
-        id: result.user.id,
-        nombre: result.user.nombre,
-        nickname: result.user.nickname,
-        email: result.user.email,
-        rolGlobal: result.user.rolGlobal,
-        rol: 'negocio',
-        negocio: {
-          ...result.negocio,
-          horario: this.cleanHorarioForResponse(result.negocio.horario),
-          nenufarActivo:
-            result.negocio.nenufarActivo ?? result.negocio.nenufarAsset,
-        },
-      };
+      // res no se usa aquí: las cookies se establecen en verificarEmail()
+      void res;
 
       this.logger.log(
         `[registro-negocio] respuesta 201 enviada usuario id=${result.user.id}`,
       );
 
       return {
-        access_token: tokens.access,
-        usuario: publicUser,
-        user: publicUser,
+        ok: true,
         requiresEmailVerification: true,
         ...(emailVerificationInfoNegocio
           ? { emailVerification: emailVerificationInfoNegocio }
@@ -1539,6 +1528,21 @@ export class AuthService {
     if (!ok) {
       this.logFailedLoginAttempt(identifier, 'password_mismatch');
       throw new UnauthorizedException('Credenciales inválidas');
+    }
+
+    if (!user.emailVerificado) {
+      this.logger.warn(
+        `[login] intento login email no verificado user=${user.id}`,
+      );
+      throw new HttpException(
+        {
+          code: 'EMAIL_NOT_VERIFIED',
+          message: 'Debes verificar tu email antes de iniciar sesión.',
+          requiresEmailVerification: true,
+          email: user.email,
+        },
+        HttpStatus.FORBIDDEN,
+      );
     }
 
     const tokens = await this.signTokens(
@@ -1664,7 +1668,7 @@ export class AuthService {
     return this.verifyEmailToken(dto);
   }
 
-  async verificarEmail(dto: VerifyEmailDto) {
+  async verificarEmail(dto: VerifyEmailDto, res?: Response) {
     const email = dto.email.trim().toLowerCase();
     const user = await this.prisma.usuario.findUnique({
       where: { email },
@@ -1676,16 +1680,22 @@ export class AuthService {
     }
 
     if (user.emailVerificado) {
-      return {
-        ok: true,
-        message: 'Email ya verificado',
-        user: (await this.getPublicAuthUserById(user.id)) ?? {
-          id: user.id,
-          nombre: user.nombre,
-          nickname: user.nickname,
-          email: user.email,
-        },
+      const publicUser = (await this.getPublicAuthUserById(user.id)) ?? {
+        id: user.id,
+        nombre: user.nombre,
+        nickname: user.nickname,
+        email: user.email,
       };
+      if (res) {
+        const tokens = await this.signTokens({
+          id: user.id,
+          email: user.email,
+          nickname: user.nickname,
+          rolGlobal: user.rolGlobal,
+        });
+        this.setSessionCookies(res, tokens, 'verificar-email');
+      }
+      return { ok: true, message: 'Email ya verificado', user: publicUser };
     }
 
     if (
@@ -1755,6 +1765,20 @@ export class AuthService {
     );
 
     await this.sendWelcomeEmailIfNeeded(user.id);
+
+    const tokens = await this.signTokens({
+      id: verifiedUser.id,
+      email: verifiedUser.email,
+      nickname: verifiedUser.nickname,
+      rolGlobal: verifiedUser.rolGlobal,
+    });
+
+    if (res) {
+      this.setSessionCookies(res, tokens, 'verificar-email');
+      this.logger.log(
+        `[verificar-email] sesión iniciada user=${verifiedUser.id}`,
+      );
+    }
 
     return {
       ok: true,

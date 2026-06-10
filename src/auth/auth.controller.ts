@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Header, Post, Req, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Header,
+  Post,
+  Req,
+  Res,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -57,8 +65,11 @@ export class AuthController {
   }
 
   @Post('verificar-email')
-  verificarEmail(@Body() dto: VerifyEmailDto) {
-    return this.authService.verificarEmail(dto);
+  verificarEmail(
+    @Body() dto: VerifyEmailDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return this.authService.verificarEmail(dto, res);
   }
 
   @Post('reenviar-codigo-email')
