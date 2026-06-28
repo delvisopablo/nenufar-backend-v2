@@ -236,6 +236,7 @@ describe('Persistencia básica E2E', () => {
       categoriaId: categoria.id,
       subcategoriaId: subcategoria.id,
       intervaloReserva: 30,
+      reservasActivas: true,
       horario: {
         weekly: {
           mon: [['09:00', '12:00']],
@@ -290,6 +291,7 @@ describe('Persistencia básica E2E', () => {
       categoriaId: categoria.id,
       subcategoriaId: subcategoria.id,
       intervaloReserva: 30,
+      reservasActivas: true,
       horario: {
         weekly: {
           mon: [['09:00', '12:00']],
@@ -324,8 +326,10 @@ describe('Persistencia básica E2E', () => {
 
     expect(response.body).toEqual(
       expect.objectContaining({
-        statusCode: 400,
+        ok: false,
+        code: 'RESERVATION_SLOT_UNAVAILABLE',
         message: 'Slot no disponible',
+        fieldErrors: { fecha: 'Slot no disponible' },
       }),
     );
   });

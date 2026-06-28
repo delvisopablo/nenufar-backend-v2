@@ -32,6 +32,7 @@ import { NenufarizarModule } from './nenufarizar/nenufarizar.module';
 import { CodigosNenufarizacionModule } from './codigos-nenufarizacion/codigos-nenufarizacion.module';
 import { AdminModule } from './admin/admin.module';
 import { ListaCompraModule } from './lista-compra/lista-compra.module';
+import { SearchModule } from './search/search.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { ListaCompraModule } from './lista-compra/lista-compra.module';
     CodigosNenufarizacionModule,
     AdminModule,
     ListaCompraModule,
+    SearchModule,
     ConfigModule.forRoot({ isGlobal: true }),
     JwtModule.register({
       secret: process.env.JWT_SECRET,

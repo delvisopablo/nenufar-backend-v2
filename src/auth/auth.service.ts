@@ -36,7 +36,7 @@ import {
   summarizeHorarioForLog,
 } from '../negocio/horario.util';
 import { NenufarizarService } from '../nenufarizar/nenufarizar.service';
-import { AppError } from '../common/errors/app-error';
+import { AppError, createFieldError } from '../common/errors/app-error';
 import { createHash, randomInt, timingSafeEqual } from 'crypto';
 
 // Cambiar a true para hacer obligatorio el código de nenufarización en el registro de negocio
@@ -285,6 +285,59 @@ function normalizeOptionalString(value: unknown) {
   return normalized || undefined;
 }
 
+function prismaTargetIncludes(
+  error: Prisma.PrismaClientKnownRequestError,
+  field: string,
+) {
+  const target = error.meta?.target;
+  const targets = Array.isArray(target)
+    ? target.map(String)
+    : [String(target ?? '')];
+
+  return targets.some((item) =>
+    item.toLowerCase().includes(field.toLowerCase()),
+  );
+}
+
+function emailAlreadyInUseError(details: Record<string, unknown> = {}) {
+  return createFieldError(
+    'EMAIL_ALREADY_IN_USE',
+    'Este correo ya está en uso.',
+    'email',
+    'Este correo ya está en uso.',
+    409,
+    details,
+  );
+}
+
+function nicknameAlreadyInUseError(details: Record<string, unknown> = {}) {
+  return createFieldError(
+    'NICKNAME_ALREADY_IN_USE',
+    'Este nickname ya está en uso.',
+    'nickname',
+    'Este nickname ya está en uso.',
+    409,
+    details,
+  );
+}
+
+function passwordConfirmationMismatchError(field = 'confirmPassword') {
+  return createFieldError(
+    'PASSWORD_CONFIRMATION_MISMATCH',
+    'La confirmación de contraseña no coincide.',
+    field,
+    'La confirmación de contraseña no coincide.',
+  );
+}
+
+function verificationCodeError(
+  code: string,
+  message: string,
+  statusCode = 400,
+) {
+  return createFieldError(code, message, 'code', message, statusCode);
+}
+
 function isDeletedAccount(user: {
   eliminadoEn?: Date | null;
   estadoCuenta?: EstadoCuenta | null;
@@ -333,13 +386,19 @@ export class AuthService {
     }
 
     if (!intervaloReserva || intervaloReserva <= 0) {
-      throw new BadRequestException(
+      throw createFieldError(
+        'INVALID_RESERVATION_INTERVAL',
+        'Si las reservas estan activas, intervaloReserva debe ser positivo',
+        'intervaloReserva',
         'Si las reservas estan activas, intervaloReserva debe ser positivo',
       );
     }
 
     if (!horario || !hasOpenDays(horario)) {
-      throw new BadRequestException(
+      throw createFieldError(
+        'INVALID_SCHEDULE',
+        'Si las reservas estan activas, debe haber al menos un dia abierto',
+        'horario',
         'Si las reservas estan activas, debe haber al menos un dia abierto',
       );
     }
@@ -415,12 +474,22 @@ export class AuthService {
       normalizeOptionalString(dto.nickname);
 
     if (!rawIdentifier) {
-      throw new BadRequestException('El email o nickname es obligatorio');
+      throw createFieldError(
+        'REQUIRED_FIELD',
+        'El email o nickname es obligatorio.',
+        'identifier',
+        'El email o nickname es obligatorio.',
+      );
     }
 
     if (rawIdentifier.includes('@')) {
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawIdentifier)) {
-        throw new BadRequestException('El email no es válido');
+        throw createFieldError(
+          'INVALID_EMAIL',
+          'El correo introducido no tiene un formato válido.',
+          'email',
+          'El correo introducido no tiene un formato válido.',
+        );
       }
 
       return {
@@ -580,12 +649,28 @@ export class AuthService {
       });
 
       if (!payload.sub || payload.type !== expectedType) {
-        throw new UnauthorizedException('Token inválido o expirado');
+        throw new Error('Invalid one-time token payload');
       }
 
       return payload;
-    } catch {
-      throw new UnauthorizedException('Token inválido o expirado');
+    } catch (error) {
+      const expired =
+        error instanceof Error && error.name === 'TokenExpiredError';
+      const isReset = expectedType === 'reset-password';
+
+      throw new AppError(
+        expired
+          ? isReset
+            ? 'RESET_TOKEN_EXPIRED'
+            : 'VERIFICATION_CODE_EXPIRED'
+          : isReset
+            ? 'RESET_TOKEN_INVALID'
+            : 'VERIFICATION_CODE_INVALID',
+        expired
+          ? 'El enlace ha caducado.'
+          : 'El enlace no es válido o ya ha caducado.',
+        401,
+      );
     }
   }
 
@@ -1149,6 +1234,20 @@ export class AuthService {
     const normalizedCodigoReferido = normalizeOptionalString(
       dto.codigoReferido,
     )?.toUpperCase();
+    const passwordConfirmation = normalizeOptionalString(
+      dto.confirmPassword ?? dto.passwordConfirmation,
+    );
+
+    if (
+      passwordConfirmation !== undefined &&
+      passwordConfirmation !== dto.password
+    ) {
+      throw passwordConfirmationMismatchError(
+        dto.confirmPassword !== undefined
+          ? 'confirmPassword'
+          : 'passwordConfirmation',
+      );
+    }
 
     // Check existing user — handle unverified email without disclosing existence
     const existente = await this.prisma.usuario.findFirst({
@@ -1185,7 +1284,15 @@ export class AuthService {
         };
       }
 
-      throw new ConflictException('Email o nickname ya en uso');
+      if (existente.email === normalizedEmail) {
+        throw emailAlreadyInUseError();
+      }
+
+      if (existente.nickname === normalizedNickname) {
+        throw nicknameAlreadyInUseError();
+      }
+
+      throw emailAlreadyInUseError();
     }
 
     const hash = await bcrypt.hash(dto.password, 10);
@@ -1212,7 +1319,11 @@ export class AuthService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new ConflictException('Email o nickname ya en uso');
+        if (prismaTargetIncludes(error, 'nickname')) {
+          throw nicknameAlreadyInUseError({ target: error.meta?.target });
+        }
+
+        throw emailAlreadyInUseError({ target: error.meta?.target });
       }
       throw error;
     }
@@ -1300,7 +1411,12 @@ export class AuthService {
       : new Date();
 
     if (dto.fechaFundacion && Number.isNaN(fechaFundacion.getTime())) {
-      throw new BadRequestException('La fecha de fundación no es válida');
+      throw createFieldError(
+        'VALIDATION_ERROR',
+        'La fecha de fundación no es válida',
+        'fechaFundacion',
+        'La fecha de fundación no es válida',
+      );
     }
 
     const horario = this.normalizeHorarioPayload(dto.horario);
@@ -1324,7 +1440,7 @@ export class AuthService {
       select: { id: true },
     });
     if (emailExists) {
-      throw new AppError('EMAIL_YA_EXISTE', 'El email ya está en uso', 409);
+      throw emailAlreadyInUseError();
     }
 
     const nicknameExists = await this.prisma.usuario.findFirst({
@@ -1332,11 +1448,7 @@ export class AuthService {
       select: { id: true },
     });
     if (nicknameExists) {
-      throw new AppError(
-        'NICKNAME_YA_EXISTE',
-        'El nickname ya está en uso',
-        409,
-      );
+      throw nicknameAlreadyInUseError();
     }
 
     const hash = await bcrypt.hash(dto.password, 10);
@@ -1543,16 +1655,12 @@ export class AuthService {
       ) {
         const targets = (error.meta?.target as string[]) ?? [];
         if (targets.includes('email')) {
-          throw new AppError('EMAIL_YA_EXISTE', 'El email ya está en uso', 409);
+          throw emailAlreadyInUseError({ target: error.meta?.target });
         }
         if (targets.includes('nickname')) {
-          throw new AppError(
-            'NICKNAME_YA_EXISTE',
-            'El nickname ya está en uso',
-            409,
-          );
+          throw nicknameAlreadyInUseError({ target: error.meta?.target });
         }
-        throw new ConflictException('Email o nickname ya en uso');
+        throw emailAlreadyInUseError({ target: error.meta?.target });
       }
 
       throw error;
@@ -1579,7 +1687,7 @@ export class AuthService {
 
     if (!user) {
       this.logFailedLoginAttempt(identifier, 'user_not_found');
-      throw new UnauthorizedException('Credenciales inválidas');
+      throw new UnauthorizedException('Credenciales incorrectas.');
     }
 
     if (isDeletedAccount(user)) {
@@ -1589,7 +1697,7 @@ export class AuthService {
     const ok = await bcrypt.compare(dto.password, user.password);
     if (!ok) {
       this.logFailedLoginAttempt(identifier, 'password_mismatch');
-      throw new UnauthorizedException('Credenciales inválidas');
+      throw new UnauthorizedException('Credenciales incorrectas.');
     }
 
     if (!user.emailVerificado) {
@@ -1764,15 +1872,19 @@ export class AuthService {
       !user.codigoVerificacionEmailHash ||
       !user.codigoVerificacionEmailExpiraEn
     ) {
-      throw new BadRequestException('No hay código de verificación activo');
+      throw verificationCodeError(
+        'VERIFICATION_CODE_INVALID',
+        'Código de verificación incorrecto',
+      );
     }
 
     if (
       user.codigoVerificacionEmailIntentos >= EMAIL_VERIFICATION_MAX_ATTEMPTS
     ) {
-      throw new HttpException(
+      throw verificationCodeError(
+        'TOO_MANY_ATTEMPTS',
         'Demasiados intentos. Solicita un nuevo código.',
-        HttpStatus.TOO_MANY_REQUESTS,
+        429,
       );
     }
 
@@ -1788,7 +1900,10 @@ export class AuthService {
           codigoVerificacionEmailIntentos: 0,
         },
       });
-      throw new BadRequestException('El código de verificación ha expirado');
+      throw verificationCodeError(
+        'VERIFICATION_CODE_EXPIRED',
+        'El código de verificación ha expirado',
+      );
     }
 
     const codeMatches = await this.emailVerificationCodeMatches(
@@ -1807,7 +1922,10 @@ export class AuthService {
       this.logger.warn(
         `Código de verificación incorrecto usuario=${user.id} email=${this.maskEmail(user.email)} attempts=${attempts}`,
       );
-      throw new BadRequestException('Código de verificación incorrecto');
+      throw verificationCodeError(
+        'VERIFICATION_CODE_INVALID',
+        'Código de verificación incorrecto',
+      );
     }
 
     const verifiedUser = await this.prisma.usuario.update({
@@ -1873,9 +1991,10 @@ export class AuthService {
       Date.now() - user.codigoVerificacionEmailUltimoEnvioEn.getTime() <
         EMAIL_VERIFICATION_RESEND_COOLDOWN_MS
     ) {
-      throw new HttpException(
+      throw new AppError(
+        'TOO_MANY_ATTEMPTS',
         'Espera 60 segundos antes de pedir otro código',
-        HttpStatus.TOO_MANY_REQUESTS,
+        429,
       );
     }
 
@@ -1914,6 +2033,21 @@ export class AuthService {
   }
 
   async resetPassword(dto: ResetPasswordDto) {
+    const passwordConfirmation = normalizeOptionalString(
+      dto.confirmPassword ?? dto.passwordConfirmation,
+    );
+
+    if (
+      passwordConfirmation !== undefined &&
+      passwordConfirmation !== dto.newPassword
+    ) {
+      throw passwordConfirmationMismatchError(
+        dto.confirmPassword !== undefined
+          ? 'confirmPassword'
+          : 'passwordConfirmation',
+      );
+    }
+
     const payload = await this.verifyOneTimeToken(dto.token, 'reset-password');
     const hash = await bcrypt.hash(dto.newPassword, 10);
 

@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { createFieldError } from '../common/errors/app-error';
 
 export const HORARIO_DAY_KEYS = [
   'mon',
@@ -48,6 +48,14 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function invalidSchedule(message: string) {
+  return createFieldError('INVALID_SCHEDULE', message, 'horario', message);
+}
+
+function invalidTimeRange(message: string) {
+  return createFieldError('INVALID_TIME_RANGE', message, 'horario', message);
+}
+
 export function isHHmm(value: string) {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(value);
 }
@@ -88,20 +96,18 @@ function normalizeRangeParts(
   label: string,
 ): HorarioRange {
   if (typeof rawStart !== 'string' || typeof rawEnd !== 'string') {
-    throw new BadRequestException(`${label} debe incluir horas HH:mm`);
+    throw invalidTimeRange(`${label} debe incluir horas HH:mm`);
   }
 
   const start = rawStart.trim();
   const end = rawEnd.trim();
 
   if (!isHHmm(start) || !isHHmm(end)) {
-    throw new BadRequestException(`${label} debe usar formato HH:mm`);
+    throw invalidTimeRange(`${label} debe usar formato HH:mm`);
   }
 
   if (toMinutes(start) >= toMinutes(end)) {
-    throw new BadRequestException(
-      `${label} debe tener apertura menor que cierre`,
-    );
+    throw invalidTimeRange(`${label} debe tener apertura menor que cierre`);
   }
 
   return [start, end];
@@ -109,7 +115,7 @@ function normalizeRangeParts(
 
 function normalizeRange(rawRange: unknown, label: string): HorarioRange {
   if (!Array.isArray(rawRange) || rawRange.length !== 2) {
-    throw new BadRequestException(`${label} debe ser [apertura, cierre]`);
+    throw invalidTimeRange(`${label} debe ser [apertura, cierre]`);
   }
 
   return normalizeRangeParts(rawRange[0], rawRange[1], label);
@@ -117,7 +123,7 @@ function normalizeRange(rawRange: unknown, label: string): HorarioRange {
 
 function normalizeRanges(rawRanges: unknown, label: string): HorarioRange[] {
   if (!Array.isArray(rawRanges)) {
-    throw new BadRequestException(`${label} debe ser un array`);
+    throw invalidSchedule(`${label} debe ser un array`);
   }
 
   return rawRanges.map((range, index) =>
@@ -143,14 +149,14 @@ function normalizeExceptions(
   rawExceptions: unknown,
 ): Record<string, HorarioRange[]> {
   if (!isObject(rawExceptions)) {
-    throw new BadRequestException('horario.exceptions debe ser un objeto');
+    throw invalidSchedule('horario.exceptions debe ser un objeto');
   }
 
   const exceptions: Record<string, HorarioRange[]> = {};
 
   for (const [date, ranges] of Object.entries(rawExceptions)) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      throw new BadRequestException(
+      throw invalidSchedule(
         `horario.exceptions.${date} debe usar formato YYYY-MM-DD`,
       );
     }
@@ -166,7 +172,7 @@ function normalizeLegacyHorario(input: Record<string, unknown>): HorarioJson {
 
   if (input.weekly !== undefined) {
     if (!isObject(input.weekly)) {
-      throw new BadRequestException('horario.weekly debe ser un objeto');
+      throw invalidSchedule('horario.weekly debe ser un objeto');
     }
 
     const weekly: Partial<Record<HorarioDayKey, HorarioRange[]>> = {};
@@ -174,9 +180,7 @@ function normalizeLegacyHorario(input: Record<string, unknown>): HorarioJson {
     for (const [rawDay, rawRanges] of Object.entries(input.weekly)) {
       const dayKey = normalizeDayToken(rawDay);
       if (!dayKey) {
-        throw new BadRequestException(
-          `Dia invalido en horario.weekly: ${rawDay}`,
-        );
+        throw invalidSchedule(`Dia invalido en horario.weekly: ${rawDay}`);
       }
 
       weekly[dayKey] = normalizeRanges(rawRanges, `horario.weekly.${rawDay}`);
@@ -220,18 +224,18 @@ function normalizeStructuredDay(
   }
 
   if (!isObject(rawDay)) {
-    throw new BadRequestException(`${dayLabel} debe ser un objeto`);
+    throw invalidSchedule(`${dayLabel} debe ser un objeto`);
   }
 
   const abierto = rawDay.abierto;
   if (abierto !== undefined && typeof abierto !== 'boolean') {
-    throw new BadRequestException(`${dayLabel}.abierto debe ser boolean`);
+    throw invalidSchedule(`${dayLabel}.abierto debe ser boolean`);
   }
 
   if (rawDay.rangos !== undefined) {
     const ranges = normalizeRanges(rawDay.rangos, `${dayLabel}.rangos`);
     if (abierto === false && ranges.length > 0) {
-      throw new BadRequestException(
+      throw invalidSchedule(
         `${dayLabel} no puede tener rangos si esta cerrado`,
       );
     }
@@ -241,7 +245,7 @@ function normalizeStructuredDay(
 
   if (rawDay.apertura !== undefined || rawDay.cierre !== undefined) {
     if (abierto === false) {
-      throw new BadRequestException(
+      throw invalidSchedule(
         `${dayLabel} no puede tener apertura/cierre si esta cerrado`,
       );
     }
@@ -250,7 +254,7 @@ function normalizeStructuredDay(
   }
 
   if (abierto === true) {
-    throw new BadRequestException(
+    throw invalidSchedule(
       `${dayLabel} abierto requiere apertura/cierre o rangos`,
     );
   }
@@ -264,7 +268,7 @@ export function normalizeHorarioInput(rawHorario: unknown): HorarioJson | null {
   }
 
   if (!isObject(rawHorario)) {
-    throw new BadRequestException('horario debe ser un objeto');
+    throw invalidSchedule('horario debe ser un objeto');
   }
 
   if (
@@ -288,7 +292,7 @@ export function normalizeHorarioInput(rawHorario: unknown): HorarioJson | null {
 
     const dayKey = normalizeDayToken(rawDay);
     if (!dayKey) {
-      throw new BadRequestException(`Dia invalido en horario: ${rawDay}`);
+      throw invalidSchedule(`Dia invalido en horario: ${rawDay}`);
     }
 
     weekly[dayKey] = normalizeStructuredDay(rawConfig, `horario.${rawDay}`);

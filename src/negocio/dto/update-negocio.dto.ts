@@ -1,11 +1,15 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
+  IsEmail,
   IsInt,
+  IsNotEmpty,
   IsObject,
   IsOptional,
   IsString,
+  IsUrl,
+  Matches,
   MaxLength,
   Min,
 } from 'class-validator';
@@ -14,6 +18,7 @@ export class UpdateNegocioDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsOptional()
+  @IsNotEmpty()
   @MaxLength(120)
   nombre?: string;
 
@@ -46,6 +51,25 @@ export class UpdateNegocioDto {
   direccion?: string | null;
 
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsOptional()
+  @IsUrl({ require_protocol: true })
+  @MaxLength(255)
+  web?: string | null;
+
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(255)
+  emailContacto?: string | null;
+
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @IsOptional()
+  @Matches(/^[+()\d\s.-]{6,25}$/)
+  telefono?: string | null;
+
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsOptional()
   @MaxLength(255)
@@ -75,12 +99,16 @@ export class UpdateNegocioDto {
   @MaxLength(255)
   nenufarAsset?: string | null;
 
+  @Type(() => Number)
   @IsInt()
   @IsOptional()
+  @Min(1)
   categoriaId?: number;
 
+  @Type(() => Number)
   @IsInt()
   @IsOptional()
+  @Min(1)
   subcategoriaId?: number;
 
   @IsInt()

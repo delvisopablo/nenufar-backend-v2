@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -12,8 +13,15 @@ import {
   Query,
   Req,
   UnauthorizedException,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { EstadoSolicitudProducto } from '@prisma/client';
+import { randomUUID } from 'crypto';
+import type { Request } from 'express';
+import { mkdir, writeFile } from 'fs/promises';
+import { join } from 'path';
 import { ProductoService } from './producto.service';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
@@ -23,6 +31,21 @@ import {
   CreateSolicitudProductoDto,
 } from './dto/create-solicitud-producto.dto';
 import { RechazarSolicitudProductoDto } from './dto/rechazar-solicitud-producto.dto';
+
+const MAX_PRODUCT_PHOTO_SIZE = 5 * 1024 * 1024;
+const productPhotoExtensions: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
+
+type UploadedProductPhoto = {
+  buffer?: Buffer;
+  mimetype?: string;
+  originalname?: string;
+  size?: number;
+};
 
 @Controller()
 export class ProductoController {
@@ -69,6 +92,48 @@ export class ProductoController {
     return this.service.create(negocioId, dto, currentUserId, isAdmin);
   }
 
+  @Post('negocios/:negocioId/productos/:productoId/foto')
+  @UseInterceptors(
+    FileInterceptor('foto', {
+      limits: { fileSize: MAX_PRODUCT_PHOTO_SIZE },
+      fileFilter: (_req, file: UploadedProductPhoto, callback) => {
+        const mimeType = String(file.mimetype ?? '');
+
+        if (!productPhotoExtensions[mimeType]) {
+          callback(
+            new BadRequestException(
+              'La foto del producto debe ser JPG, PNG o WEBP',
+            ),
+            false,
+          );
+          return;
+        }
+
+        callback(null, true);
+      },
+    }),
+  )
+  async subirFoto(
+    @Param('negocioId', ParseIntPipe) negocioId: number,
+    @Param('productoId', ParseIntPipe) productoId: number,
+    @UploadedFile() file: UploadedProductPhoto | undefined,
+    @Req() req: any,
+  ) {
+    const currentUserId = this.getAuthenticatedUserId(req);
+    const isAdmin = !!req.user?.isAdmin;
+    const relativePath = await this.persistProductPhoto(productoId, file);
+    const fotoUrl = this.buildPublicUploadUrl(req, relativePath);
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
+    return this.service.actualizarFoto(
+      negocioId,
+      productoId,
+      fotoUrl,
+      currentUserId,
+      isAdmin,
+    );
+  }
+
   @Post('negocios/:id/solicitudes-producto')
   crearSolicitud(
     @Param('id', ParseIntPipe) negocioId: number,
@@ -101,8 +166,19 @@ export class ProductoController {
   }
 
   @Get('productos/buscar')
-  search(@Query('q') q = '', @Query('limit') limit?: number, @Req() req?: any) {
-    return this.service.search(q, limit, this.getOptionalUserId(req ?? {}));
+  search(
+    @Query('q') q = '',
+    @Query('limit') limit?: number,
+    @Query('categoriaId') categoriaId?: number,
+    @Query('subcategoriaId') subcategoriaId?: number,
+    @Query('negocioId') negocioId?: number,
+    @Req() req?: any,
+  ) {
+    return this.service.search(q, limit, this.getOptionalUserId(req ?? {}), {
+      categoriaId,
+      subcategoriaId,
+      negocioId,
+    });
   }
 
   @Get('productos/:id')
@@ -181,5 +257,60 @@ export class ProductoController {
     const currentUserId = this.getAuthenticatedUserId(req);
     const isAdmin = !!req.user?.isAdmin;
     return this.service.rechazarSolicitud(id, dto, currentUserId, isAdmin);
+  }
+
+  private async persistProductPhoto(
+    productoId: number,
+    file: UploadedProductPhoto | undefined,
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Selecciona una foto de producto');
+    }
+
+    if (Number(file.size ?? 0) > MAX_PRODUCT_PHOTO_SIZE) {
+      throw new BadRequestException(
+        'La foto del producto no puede superar 5 MB',
+      );
+    }
+
+    const mimeType = String(file.mimetype ?? '');
+    const extension = productPhotoExtensions[mimeType];
+
+    if (!extension) {
+      throw new BadRequestException(
+        'La foto del producto debe ser JPG, PNG o WEBP',
+      );
+    }
+
+    const uploadDir = join(process.cwd(), 'uploads', 'productos', 'foto');
+    await mkdir(uploadDir, { recursive: true });
+
+    const filename = `producto-${productoId}-${randomUUID()}.${extension}`;
+    await writeFile(join(uploadDir, filename), file.buffer);
+
+    return `uploads/productos/foto/${filename}`;
+  }
+
+  private buildPublicUploadUrl(req: Request, relativePath: string) {
+    const configuredBase =
+      process.env.PUBLIC_BACKEND_URL ??
+      process.env.BACKEND_PUBLIC_URL ??
+      process.env.API_PUBLIC_URL ??
+      '';
+    const normalizedBase = configuredBase
+      .trim()
+      .replace(/\/api\/?$/, '')
+      .replace(/\/+$/, '');
+
+    if (normalizedBase) {
+      return `${normalizedBase}/${relativePath}`;
+    }
+
+    const forwardedHost = req.get('x-forwarded-host')?.split(',')[0]?.trim();
+    const host = forwardedHost || req.get('host');
+    const forwardedProto = req.get('x-forwarded-proto')?.split(',')[0]?.trim();
+    const protocol = forwardedProto || req.protocol || 'http';
+
+    return host ? `${protocol}://${host}/${relativePath}` : `/${relativePath}`;
   }
 }

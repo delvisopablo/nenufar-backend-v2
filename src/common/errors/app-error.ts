@@ -1,4 +1,56 @@
 export type ErrorDetails = Record<string, unknown>;
+export type FieldErrors = Record<string, string>;
+
+function asFields(fieldErrors: FieldErrors) {
+  return Object.fromEntries(
+    Object.entries(fieldErrors).map(([field, message]) => [field, [message]]),
+  );
+}
+
+export function fieldErrorDetails(
+  fieldErrors: FieldErrors,
+  details: ErrorDetails = {},
+): ErrorDetails {
+  return {
+    ...details,
+    fieldErrors,
+    fields:
+      typeof details.fields === 'object' && details.fields !== null
+        ? details.fields
+        : asFields(fieldErrors),
+  };
+}
+
+export function createFieldError(
+  code: string,
+  message: string,
+  field: string,
+  fieldMessage = message,
+  statusCode = 400,
+  details: ErrorDetails = {},
+) {
+  return new AppError(
+    code,
+    message,
+    statusCode,
+    fieldErrorDetails({ [field]: fieldMessage }, details),
+  );
+}
+
+export function createFieldsError(
+  code: string,
+  message: string,
+  fieldErrors: FieldErrors,
+  statusCode = 400,
+  details: ErrorDetails = {},
+) {
+  return new AppError(
+    code,
+    message,
+    statusCode,
+    fieldErrorDetails(fieldErrors, details),
+  );
+}
 
 export class AppError extends Error {
   readonly code: string;
@@ -46,7 +98,10 @@ export class NotFoundError extends AppError {
 }
 
 export class ConflictError extends AppError {
-  constructor(message = 'Conflicto con el estado actual', details: ErrorDetails = {}) {
+  constructor(
+    message = 'Conflicto con el estado actual',
+    details: ErrorDetails = {},
+  ) {
     super('CONFLICT', message, 409, details);
   }
 }

@@ -19,6 +19,7 @@ import { CreateCompraDto } from './dto/create-compra.dto';
 import { CreatePagoDto } from './dto/create-pago.dto';
 import { QueryNegocioPedidosDto } from './dto/query-negocio-pedidos.dto';
 import { UpdatePagoEstadoDto } from './dto/update-pago-estado.dto';
+import { UpdateEstadoPedidoDto } from './dto/update-estado-pedido.dto';
 
 @Controller()
 export class PedidoController {
@@ -65,6 +66,28 @@ export class PedidoController {
     @Body() dto: UpdatePedidoDto,
   ) {
     return this.service.updatePedido(id, dto);
+  }
+
+  /** Cambia el estado del pedido. Solo dueño/miembro del negocio o admin. */
+  @Patch('pedidos/:id/estado')
+  actualizarEstadoPedido(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateEstadoPedidoDto,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.actualizarEstadoPedido(
+      id,
+      this.getAuthenticatedUserId(req),
+      dto.estado,
+    );
+  }
+
+  /** Historial de pedidos generados al cerrar listas de Mi Nenulista. */
+  @Get('me/nenulista/pedidos')
+  historialNenulista(@Req() req: { user?: { id?: number } }) {
+    return this.service.listHistorialNenulista(
+      this.getAuthenticatedUserId(req),
+    );
   }
 
   // líneas

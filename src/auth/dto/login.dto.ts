@@ -1,10 +1,10 @@
 import { Transform } from 'class-transformer';
 import {
   IsBoolean,
+  IsNotEmpty,
   IsOptional,
   IsString,
   MaxLength,
-  MinLength,
 } from 'class-validator';
 
 function trimString(value: unknown) {
@@ -35,7 +35,7 @@ export class LoginDto {
   nickname?: string;
 
   @IsString()
-  @MinLength(6)
+  @IsNotEmpty()
   @MaxLength(72)
   password!: string;
 

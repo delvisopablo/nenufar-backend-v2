@@ -22,6 +22,7 @@ import { UpdateReservaDto } from './dto/update-reserva.dto';
 import { UpdateReservaEstadoDto } from './dto/update-reserva-estado.dto';
 import { QueryNegocioReservasDto } from './dto/query-negocio-reservas.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt.guard';
+import { createFieldError } from '../common/errors/app-error';
 
 @Controller()
 export class ReservaController {
@@ -38,7 +39,12 @@ export class ReservaController {
   private parseAvailabilityDate(date?: string, fecha?: string) {
     const resolvedDate = (fecha ?? date ?? '').trim();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(resolvedDate)) {
-      throw new BadRequestException('fecha debe ser YYYY-MM-DD');
+      throw createFieldError(
+        'INVALID_RESERVATION_DATE',
+        'fecha debe ser YYYY-MM-DD',
+        'fecha',
+        'fecha debe ser YYYY-MM-DD',
+      );
     }
     return resolvedDate;
   }

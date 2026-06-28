@@ -55,7 +55,7 @@ export async function registerAndLogin(
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '')}_${Math.random().toString(36).slice(2, 8)}`;
 
-  const registerResponse = await request(app.getHttpServer())
+  await request(app.getHttpServer())
     .post('/auth/registro')
     .send({
       nombre: 'Usuario E2E',
@@ -65,17 +65,30 @@ export async function registerAndLogin(
     })
     .expect(201);
 
+  // El registro exige verificación de email (no toca producción: aquí solo
+  // marcamos el estado directamente en BD para poder probar el resto de
+  // flujos sin depender del envío real del código por n8n).
+  const usuario = await verifyUsuarioEmail(app, email);
+
   const loginResponse = await request(app.getHttpServer())
     .post('/auth/login')
     .send({ email, password })
-    .expect(200);
+    .expect(201);
 
   const rawCookie = loginResponse.headers['set-cookie'];
 
   return {
     cookie: Array.isArray(rawCookie) ? rawCookie : rawCookie ? [rawCookie] : [],
-    usuarioId: registerResponse.body.id as number,
+    usuarioId: usuario.id,
   };
+}
+
+export async function verifyUsuarioEmail(app: INestApplication, email: string) {
+  const prisma = app.get(PrismaService);
+  return prisma.usuario.update({
+    where: { email },
+    data: { emailVerificado: true, codigoVerificacionEmailHash: null },
+  });
 }
 
 export async function createNegocio(

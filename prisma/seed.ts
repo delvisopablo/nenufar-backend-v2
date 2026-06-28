@@ -1298,7 +1298,14 @@ async function main() {
     | 'PERFIL_COMPLETADO'
     | 'HORARIO_NEGOCIO_CONFIGURADO'
     | 'HITO_NEGOCIO'
-    | 'TODOS_LOGROS_COMPLETADOS';
+    | 'TODOS_LOGROS_COMPLETADOS'
+    | 'NEGOCIO_RECIBIR_RESENAS'
+    | 'NEGOCIO_CREAR_PROMOCIONES'
+    | 'NEGOCIO_RECIBIR_RESERVAS'
+    | 'NEGOCIO_COMPLETAR_PEDIDOS'
+    | 'NEGOCIO_CONSEGUIR_SEGUIDORES'
+    | 'NEGOCIO_TENER_PRODUCTOS'
+    | 'NEGOCIO_RECIBIR_VISITAS';
 
   interface LogroLevel {
     titulo: string;
@@ -1685,6 +1692,117 @@ async function main() {
       categoriaLogro: logro.categoriaLogro,
       oculto: true,
       esFinal: logro.esFinal ?? false,
+    };
+
+    if (existente) {
+      await prisma.logro.update({
+        where: { id: existente.id },
+        data,
+      });
+    } else {
+      await prisma.logro.create({
+        data: {
+          titulo: logro.titulo,
+          ...data,
+        },
+      });
+    }
+  }
+
+  console.log('Sembrando logros base de negocio...');
+
+  const LOGROS_NEGOCIO: Array<{
+    titulo: string;
+    descripcion: string;
+    tipo: LogroTipoSeed;
+    accion: AccionLogro;
+    umbral: number;
+    dificultad: DificultadSeed;
+    recompensaPuntos: number;
+  }> = [
+    {
+      titulo: 'Primer aplauso recibido',
+      descripcion: 'Recibe la primera reseña publicada en tu negocio.',
+      tipo: 'RESENA',
+      accion: 'NEGOCIO_RECIBIR_RESENAS',
+      umbral: 1,
+      dificultad: 'FACIL',
+      recompensaPuntos: 30,
+    },
+    {
+      titulo: 'Escaparate con oferta',
+      descripcion: 'Crea tu primera promoción para clientes locales.',
+      tipo: 'PROMOCION',
+      accion: 'NEGOCIO_CREAR_PROMOCIONES',
+      umbral: 1,
+      dificultad: 'FACIL',
+      recompensaPuntos: 25,
+    },
+    {
+      titulo: 'Agenda estrenada',
+      descripcion: 'Recibe la primera reserva de tu negocio.',
+      tipo: 'RESERVA',
+      accion: 'NEGOCIO_RECIBIR_RESERVAS',
+      umbral: 1,
+      dificultad: 'FACIL',
+      recompensaPuntos: 30,
+    },
+    {
+      titulo: 'Primer pedido servido',
+      descripcion: 'Completa el primer pedido de tu negocio.',
+      tipo: 'COMPRA',
+      accion: 'NEGOCIO_COMPLETAR_PEDIDOS',
+      umbral: 1,
+      dificultad: 'FACIL',
+      recompensaPuntos: 35,
+    },
+    {
+      titulo: 'Comunidad en brote',
+      descripcion: 'Consigue 10 seguidores para tu negocio.',
+      tipo: 'OTRO',
+      accion: 'NEGOCIO_CONSEGUIR_SEGUIDORES',
+      umbral: 10,
+      dificultad: 'MEDIA',
+      recompensaPuntos: 90,
+    },
+    {
+      titulo: 'Catálogo vivo',
+      descripcion: 'Mantén 5 productos activos en el catálogo del negocio.',
+      tipo: 'OTRO',
+      accion: 'NEGOCIO_TENER_PRODUCTOS',
+      umbral: 5,
+      dificultad: 'MEDIA',
+      recompensaPuntos: 80,
+    },
+    {
+      titulo: 'Escaparate concurrido',
+      descripcion: 'Recibe 50 visitas en el perfil del negocio.',
+      tipo: 'OTRO',
+      accion: 'NEGOCIO_RECIBIR_VISITAS',
+      umbral: 50,
+      dificultad: 'MEDIA',
+      recompensaPuntos: 75,
+    },
+  ];
+
+  for (const logro of LOGROS_NEGOCIO) {
+    const existente = await prisma.logro.findFirst({
+      where: {
+        titulo: logro.titulo,
+        accion: logro.accion,
+      },
+    });
+
+    const data = {
+      descripcion: logro.descripcion,
+      tipo: logro.tipo,
+      accion: logro.accion,
+      dificultad: logro.dificultad,
+      umbral: logro.umbral,
+      recompensaPuntos: logro.recompensaPuntos,
+      categoriaLogro: 'NEGOCIO' as LogroCategoriaSeed,
+      oculto: false,
+      esFinal: false,
     };
 
     if (existente) {

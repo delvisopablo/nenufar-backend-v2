@@ -33,6 +33,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { SeguirNegocioDto } from './dto/seguir-negocio.dto';
 import { ToggleSeguimientoNotificacionesDto } from './dto/toggle-seguimiento-notificaciones.dto';
 import { AuthService } from '../auth/auth.service';
+import { LogroService } from '../logro/logro.service';
 import type { Response } from 'express';
 
 @ApiTags('Negocios')
@@ -43,6 +44,7 @@ export class NegocioController {
     private readonly resenaService: ResenaService,
     private readonly promocionService: PromocionService,
     private readonly authService: AuthService,
+    private readonly logroService: LogroService,
   ) {}
 
   private getAuthenticatedUserId(req: { user?: { id?: number } }) {
@@ -62,6 +64,15 @@ export class NegocioController {
   @Header('Cache-Control', 'public, max-age=30, stale-while-revalidate=120')
   findAll(@Query() q: QueryNegocioDto) {
     return this.service.list(q);
+  }
+
+  @Get('inicio')
+  @Header('Cache-Control', 'public, max-age=15, stale-while-revalidate=60')
+  inicio(
+    @Query() q: QueryNegocioDto,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.listInicio(q, this.getOptionalUserId(req));
   }
 
   @Get('me/siguiendo/negocios')
@@ -203,6 +214,14 @@ export class NegocioController {
     @Req() req: { user?: { id?: number } },
   ) {
     return this.service.registrarVisita(id, this.getOptionalUserId(req), dto);
+  }
+
+  @Get(':id/logros')
+  logros(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.logroService.logrosPorNegocio(id, this.getOptionalUserId(req));
   }
 
   @Get(':id')

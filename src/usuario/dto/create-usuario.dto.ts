@@ -1,25 +1,38 @@
+import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
+  MaxLength,
   MinLength,
 } from 'class-validator';
 
 export class CreateUsuarioDto {
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
+  @MaxLength(80)
   nombre: string;
 
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
+  @Matches(/^[a-zA-Z0-9._-]+$/)
+  @MaxLength(40)
   nickname: string;
 
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @IsNotEmpty()
   @IsEmail()
   email: string;
 
   @IsString()
-  @MinLength(5)
+  @IsNotEmpty()
+  @MinLength(8)
   password: string;
 
   @IsOptional()

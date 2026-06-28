@@ -10,6 +10,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  Matches,
   MaxLength,
   Min,
   MinLength,
@@ -68,17 +69,20 @@ export class RegisterNegocioDto {
   @Transform(({ value }) => trimString(value))
   @IsString()
   @IsNotEmpty()
+  @Matches(/^[a-zA-Z0-9._-]+$/)
   @MaxLength(40)
   nickname!: string;
 
   @ApiProperty({ example: 'pablo@minenufar.com' })
   @Transform(({ value }) => normalizeEmail(value))
+  @IsNotEmpty()
   @IsEmail()
   email!: string;
 
   @ApiProperty({ example: 'Nenufar123!' })
   @IsString()
-  @MinLength(6)
+  @IsNotEmpty()
+  @MinLength(8)
   @MaxLength(72)
   password!: string;
 

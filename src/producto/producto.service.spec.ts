@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProductoService } from './producto.service';
+import { ListaCompraService } from '../lista-compra/lista-compra.service';
 
 describe('ProductoService', () => {
   let service: ProductoService;
+  let listaCompraService: { sincronizarFavorito: jest.Mock };
   let prisma: {
     $transaction: jest.Mock;
     negocio: {
@@ -59,12 +61,20 @@ describe('ProductoService', () => {
         ),
     );
 
+    listaCompraService = {
+      sincronizarFavorito: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ProductoService,
         {
           provide: PrismaService,
           useValue: prisma,
+        },
+        {
+          provide: ListaCompraService,
+          useValue: listaCompraService,
         },
       ],
     }).compile();

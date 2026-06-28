@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsInt,
   IsArray,
+  IsNotEmpty,
   Min,
   IsEnum,
   MaxLength,
@@ -18,6 +19,8 @@ export class UpdatePromocionDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(160)
   titulo?: string;
 
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
@@ -34,6 +37,7 @@ export class UpdatePromocionDto {
   fechaCaducidad?: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   @Min(0)
   descuento?: number;
@@ -71,6 +75,7 @@ export class UpdatePromocionDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(1)
   productoId?: number;
 
   @IsOptional()

@@ -1,18 +1,30 @@
 import { Injectable, Optional } from '@nestjs/common';
 import {
   ContenidoEstado,
+  LogroCategoria,
   MotivoTx,
+  PedidoEstado,
   Prisma,
   ReservaEstado,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificacionService } from '../notificacion/notificacion.service';
 import { normalizeHorarioForRead } from '../negocio/horario.util';
-import { AccionLogro } from './logro-accion';
+import {
+  ACCIONES_LOGRO_NEGOCIO,
+  AccionLogro,
+  AccionLogroNegocio,
+} from './logro-accion';
 
 type RegistrarAccionOpts = {
   usuarioId: number;
   accion: AccionLogro;
+  refId?: number;
+};
+
+type RegistrarAccionNegocioOpts = {
+  negocioId: number;
+  accion: AccionLogroNegocio;
   refId?: number;
 };
 
@@ -38,6 +50,13 @@ export class LogroEngineService {
       desbloqueados.push(...final);
     }
 
+    return { desbloqueados };
+  }
+
+  async registrarAccionNegocio(
+    opts: RegistrarAccionNegocioOpts,
+  ): Promise<{ desbloqueados: number[] }> {
+    const desbloqueados = await this.desbloquearLogrosNegocioParaAccion(opts);
     return { desbloqueados };
   }
 
@@ -206,6 +225,192 @@ export class LogroEngineService {
         });
       } catch {
         // Best effort: una notificación fallida no debe romper el desbloqueo.
+      }
+    }
+
+    return desbloqueados;
+  }
+
+  private async desbloquearLogrosNegocioParaAccion(
+    opts: RegistrarAccionNegocioOpts,
+  ): Promise<number[]> {
+    const contador = await this.getContadorAccionNegocio(
+      opts.negocioId,
+      opts.accion,
+    );
+    if (contador <= 0) {
+      return [];
+    }
+
+    const logros = await this.prisma.logro.findMany({
+      where: {
+        accion: opts.accion,
+        categoriaLogro: LogroCategoria.NEGOCIO,
+      },
+      orderBy: {
+        umbral: 'asc',
+      },
+    });
+
+    if (logros.length === 0) {
+      return [];
+    }
+
+    const desbloqueados: number[] = [];
+
+    for (const logro of logros) {
+      const objetivo = Math.max(1, logro.umbral);
+      const progreso = Math.min(contador, objetivo);
+      const yaTiene = await this.prisma.logroNegocio.findUnique({
+        where: {
+          logroId_negocioId: {
+            logroId: logro.id,
+            negocioId: opts.negocioId,
+          },
+        },
+        select: { id: true, conseguido: true, conseguidoEn: true },
+      });
+
+      if (contador < objetivo) {
+        if (yaTiene && !yaTiene.conseguido) {
+          await this.prisma.logroNegocio.update({
+            where: { id: yaTiene.id },
+            data: { progreso },
+          });
+        } else if (!yaTiene) {
+          try {
+            await this.prisma.logroNegocio.create({
+              data: {
+                logroId: logro.id,
+                negocioId: opts.negocioId,
+                progreso,
+                veces: 0,
+                conseguido: false,
+              },
+            });
+          } catch (error) {
+            if (
+              error instanceof Prisma.PrismaClientKnownRequestError &&
+              error.code === 'P2002'
+            ) {
+              continue;
+            }
+            throw error;
+          }
+        }
+        continue;
+      }
+
+      if (yaTiene?.conseguido) {
+        continue;
+      }
+
+      const conseguidoEn = new Date();
+
+      try {
+        const desbloqueado = await this.prisma.$transaction(async (tx) => {
+          const negocio = await tx.negocio.findUnique({
+            where: { id: opts.negocioId },
+            select: { id: true, nombre: true, duenoId: true },
+          });
+
+          if (!negocio) {
+            return false;
+          }
+
+          if (yaTiene) {
+            const updated = await tx.logroNegocio.updateMany({
+              where: {
+                id: yaTiene.id,
+                conseguido: false,
+              },
+              data: {
+                progreso,
+                veces: { increment: 1 },
+                conseguido: true,
+                conseguidoEn,
+              },
+            });
+
+            if (updated.count === 0) {
+              return false;
+            }
+          } else {
+            await tx.logroNegocio.create({
+              data: {
+                logroId: logro.id,
+                negocioId: opts.negocioId,
+                progreso,
+                veces: 1,
+                conseguido: true,
+                conseguidoEn,
+              },
+            });
+          }
+
+          if (logro.recompensaPuntos > 0) {
+            const usuario = await tx.usuario.update({
+              where: { id: negocio.duenoId },
+              data: {
+                petalosSaldo: {
+                  increment: logro.recompensaPuntos,
+                },
+              },
+              select: { petalosSaldo: true },
+            });
+
+            await tx.petaloTx.create({
+              data: {
+                usuarioId: negocio.duenoId,
+                delta: logro.recompensaPuntos,
+                saldoResultante: usuario.petalosSaldo,
+                motivo: MotivoTx.LOGRO,
+                refTipo: 'LogroNegocio',
+                refId: logro.id,
+                metadata: opts.refId
+                  ? {
+                      accion: opts.accion,
+                      accionRefId: opts.refId,
+                      negocioId: negocio.id,
+                      negocioNombre: negocio.nombre,
+                    }
+                  : {
+                      accion: opts.accion,
+                      negocioId: negocio.id,
+                      negocioNombre: negocio.nombre,
+                    },
+              },
+            });
+          }
+
+          return negocio.duenoId;
+        });
+
+        if (!desbloqueado) {
+          continue;
+        }
+
+        desbloqueados.push(logro.id);
+
+        try {
+          await this.notificaciones?.fanoutUsuario({
+            usuarioId: desbloqueado,
+            tipo: 'SISTEMA',
+            titulo: `🏅 Tu negocio ha desbloqueado: ${logro.titulo}`,
+            contenido: logro.descripcion ?? undefined,
+            link: `/negocios/${opts.negocioId}/logros`,
+          });
+        } catch {
+          // Best effort: una notificación fallida no debe romper el desbloqueo.
+        }
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          continue;
+        }
+        throw error;
       }
     }
 
@@ -395,6 +600,70 @@ export class LogroEngineService {
             },
           },
         });
+
+      default:
+        return 0;
+    }
+  }
+
+  async getContadorAccionNegocio(
+    negocioId: number,
+    accion: AccionLogroNegocio,
+  ) {
+    switch (accion) {
+      case 'NEGOCIO_RECIBIR_RESENAS':
+        return this.prisma.resena.count({
+          where: {
+            negocioId,
+            eliminadoEn: null,
+            estado: ContenidoEstado.PUBLICADO,
+          },
+        });
+
+      case 'NEGOCIO_CREAR_PROMOCIONES':
+        return this.prisma.promocion.count({
+          where: {
+            negocioId,
+            eliminadoEn: null,
+          },
+        });
+
+      case 'NEGOCIO_RECIBIR_RESERVAS':
+        return this.prisma.reserva.count({
+          where: {
+            negocioId,
+            estado: {
+              not: ReservaEstado.CANCELADA,
+            },
+          },
+        });
+
+      case 'NEGOCIO_COMPLETAR_PEDIDOS':
+        return this.prisma.pedido.count({
+          where: {
+            negocioId,
+            estado: PedidoEstado.COMPLETADO,
+          },
+        });
+
+      case 'NEGOCIO_CONSEGUIR_SEGUIDORES':
+        return this.prisma.negocioSeguimiento.count({
+          where: { negocioId },
+        });
+
+      case 'NEGOCIO_TENER_PRODUCTOS':
+        return this.prisma.producto.count({
+          where: {
+            negocioId,
+            activo: true,
+            eliminadoEn: null,
+          },
+        });
+
+      case 'NEGOCIO_RECIBIR_VISITAS':
+        return this.prisma.visitaNegocio.count({
+          where: { negocioId },
+        });
     }
   }
 
@@ -445,6 +714,11 @@ export class LogroEngineService {
       where: {
         accion: {
           not: null,
+        },
+        NOT: {
+          accion: {
+            in: [...ACCIONES_LOGRO_NEGOCIO],
+          },
         },
       },
       orderBy: [{ accion: 'asc' }, { umbral: 'asc' }],

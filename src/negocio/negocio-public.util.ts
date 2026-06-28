@@ -18,12 +18,14 @@ export const negocioPublicSelect = {
   horario: true,
   intervaloReserva: true,
   reservasActivas: true,
+  categoriaId: true,
   categoria: {
     select: {
       id: true,
       nombre: true,
     },
   },
+  subcategoriaId: true,
   subcategoria: {
     select: {
       id: true,

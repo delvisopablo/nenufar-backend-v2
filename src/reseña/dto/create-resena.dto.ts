@@ -10,9 +10,10 @@ import {
   MaxLength,
   Max,
   Min,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 class ProductoSugeridoResenaDto {
   @IsString()
@@ -33,17 +34,23 @@ class ProductoSugeridoResenaDto {
 }
 
 export class CreateResenaDto {
-  @IsInt() negocioId!: number;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  negocioId!: number;
 
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(5)
   puntuacion!: number;
 
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
-  @IsOptional()
   @IsNotEmpty()
-  contenido?: string;
+  @MinLength(3)
+  @MaxLength(2000)
+  contenido!: string;
 
   @IsBoolean()
   @IsOptional()

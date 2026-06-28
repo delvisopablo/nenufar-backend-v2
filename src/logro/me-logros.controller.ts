@@ -1,12 +1,15 @@
 import {
+  Body,
   Controller,
   Get,
+  Put,
   Req,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../auth/auth.guard';
+import { UpdateLogrosDestacadosDto } from './dto/update-logros-destacados.dto';
 import { LogroService } from './logro.service';
 
 @ApiTags('Mis Logros')
@@ -36,5 +39,30 @@ export class MeLogrosController {
   @Get('progreso')
   progreso(@Req() req: { user?: { id?: number } }) {
     return this.logroService.progresoUsuario(this.getAuthenticatedUserId(req));
+  }
+
+  @Get('destacados')
+  destacados(@Req() req: { user?: { id?: number } }) {
+    return this.logroService.logrosDestacados(
+      this.getAuthenticatedUserId(req),
+    );
+  }
+
+  @Put('destacados')
+  actualizarDestacados(
+    @Req() req: { user?: { id?: number } },
+    @Body() dto: UpdateLogrosDestacadosDto,
+  ) {
+    return this.logroService.actualizarLogrosDestacados(
+      this.getAuthenticatedUserId(req),
+      dto.logroIds,
+    );
+  }
+
+  @Get('desbloqueados')
+  desbloqueados(@Req() req: { user?: { id?: number } }) {
+    return this.logroService.logrosDesbloqueadosParaDestacar(
+      this.getAuthenticatedUserId(req),
+    );
   }
 }

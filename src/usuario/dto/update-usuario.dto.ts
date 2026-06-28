@@ -1,16 +1,26 @@
 import { Transform } from 'class-transformer';
-import { IsEmail, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+} from 'class-validator';
 
 export class UpdateUsuarioDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
   @MaxLength(80)
   nombre?: string;
 
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @Matches(/^[a-zA-Z0-9._-]+$/)
   @MaxLength(40)
   nickname?: string;
 

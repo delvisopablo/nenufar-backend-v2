@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ReservaEstado } from '@prisma/client';
 import {
   IsDateString,
@@ -12,10 +12,12 @@ import {
 
 export class UpdateReservaDto {
   @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsDateString()
   fecha?: string;
 
   @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @MaxLength(500)
   nota?: string;

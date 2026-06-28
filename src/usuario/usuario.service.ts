@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { ContenidoEstado, Prisma, RolGlobal } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { createFieldError } from '../common/errors/app-error';
 import { CreateUsuarioDto } from './dto/create-usuario.dto';
 import { UpdateUsuarioDto } from './dto/update-usuario.dto';
 import * as bcrypt from 'bcrypt';
@@ -38,10 +39,63 @@ type PublicUserRecord = Prisma.UsuarioGetPayload<{
   select: typeof publicUserSelect;
 }>;
 
+const logroDestacadoPerfilSelect = {
+  id: true,
+  posicion: true,
+  logro: {
+    select: {
+      id: true,
+      titulo: true,
+      descripcion: true,
+      tipo: true,
+      categoriaLogro: true,
+      dificultad: true,
+      recompensaPuntos: true,
+      accion: true,
+    },
+  },
+} satisfies Prisma.UsuarioLogroDestacadoSelect;
+
 function normalizeOptionalString(value?: string | null) {
   if (value === undefined) return undefined;
   const normalized = value?.trim();
   return normalized || null;
+}
+
+function emailAlreadyInUseError(details: Record<string, unknown> = {}) {
+  return createFieldError(
+    'EMAIL_ALREADY_IN_USE',
+    'Este correo ya está en uso.',
+    'email',
+    'Este correo ya está en uso.',
+    409,
+    details,
+  );
+}
+
+function nicknameAlreadyInUseError(details: Record<string, unknown> = {}) {
+  return createFieldError(
+    'NICKNAME_ALREADY_IN_USE',
+    'Este nickname ya está en uso.',
+    'nickname',
+    'Este nickname ya está en uso.',
+    409,
+    details,
+  );
+}
+
+function prismaTargetIncludes(
+  error: Prisma.PrismaClientKnownRequestError,
+  field: string,
+) {
+  const target = error.meta?.target;
+  const targets = Array.isArray(target)
+    ? target.map(String)
+    : [String(target ?? '')];
+
+  return targets.some((item) =>
+    item.toLowerCase().includes(field.toLowerCase()),
+  );
 }
 
 @Injectable()
@@ -59,6 +113,32 @@ export class UsuarioService {
       foto_perfil: user.foto,
       petalosBalance: user.petalosSaldo,
     };
+  }
+
+  private mapLogrosDestacadosPerfil(
+    destacados: Array<{
+      id: number;
+      posicion: number;
+      logro: {
+        id: number;
+        titulo: string;
+        descripcion: string | null;
+        tipo: string;
+        categoriaLogro: string;
+        dificultad: string;
+        recompensaPuntos: number;
+        accion: string | null;
+      };
+    }>,
+  ) {
+    return destacados.map((item) => ({
+      id: item.id,
+      posicion: item.posicion,
+      logro: {
+        ...item.logro,
+        recompensaPetalos: item.logro.recompensaPuntos,
+      },
+    }));
   }
 
   private async assertCanManageUser(targetUserId: number, actorUserId: number) {
@@ -99,7 +179,15 @@ export class UsuarioService {
     });
 
     if (existe) {
-      throw new ConflictException('El email o nickname ya está en uso');
+      if (existe.email === normalizedEmail) {
+        throw emailAlreadyInUseError();
+      }
+
+      if (existe.nickname === normalizedNickname) {
+        throw nicknameAlreadyInUseError();
+      }
+
+      throw emailAlreadyInUseError();
     }
 
     const hash = await bcrypt.hash(dto.password, 10);
@@ -130,7 +218,11 @@ export class UsuarioService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new ConflictException('El email o nickname ya está en uso');
+        if (prismaTargetIncludes(error, 'nickname')) {
+          throw nicknameAlreadyInUseError({ target: error.meta?.target });
+        }
+
+        throw emailAlreadyInUseError({ target: error.meta?.target });
       }
       throw error;
     }
@@ -163,6 +255,10 @@ export class UsuarioService {
           },
           orderBy: { creadoEn: 'asc' },
         },
+        logrosDestacados: {
+          orderBy: { posicion: 'asc' },
+          select: logroDestacadoPerfilSelect,
+        },
         resenas: {
           where: {
             eliminadoEn: null,
@@ -180,6 +276,9 @@ export class UsuarioService {
       fotoPerfil: usuario.foto,
       foto_perfil: usuario.foto,
       petalosBalance: usuario.petalosSaldo,
+      logrosDestacados: this.mapLogrosDestacadosPerfil(
+        usuario.logrosDestacados,
+      ),
       resenas: usuario.resenas.map((resena) => mapResenaPublic(resena)),
     };
   }
@@ -216,6 +315,10 @@ export class UsuarioService {
           },
           orderBy: { creadoEn: 'asc' },
         },
+        logrosDestacados: {
+          orderBy: { posicion: 'asc' },
+          select: logroDestacadoPerfilSelect,
+        },
         resenas: {
           where: {
             eliminadoEn: null,
@@ -237,6 +340,9 @@ export class UsuarioService {
       fotoPerfil: usuario.foto,
       foto_perfil: usuario.foto,
       petalosBalance: usuario.petalosSaldo,
+      logrosDestacados: this.mapLogrosDestacadosPerfil(
+        usuario.logrosDestacados,
+      ),
       resenas: usuario.resenas.map((resena) => mapResenaPublic(resena)),
     };
   }
@@ -266,7 +372,15 @@ export class UsuarioService {
       });
 
       if (conflict) {
-        throw new ConflictException('El email o nickname ya está en uso');
+        if (email && conflict.email === email) {
+          throw emailAlreadyInUseError();
+        }
+
+        if (nickname && conflict.nickname === nickname) {
+          throw nicknameAlreadyInUseError();
+        }
+
+        throw emailAlreadyInUseError();
       }
     }
 
@@ -300,7 +414,11 @@ export class UsuarioService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new ConflictException('El email o nickname ya está en uso');
+        if (prismaTargetIncludes(error, 'nickname')) {
+          throw nicknameAlreadyInUseError({ target: error.meta?.target });
+        }
+
+        throw emailAlreadyInUseError({ target: error.meta?.target });
       }
       throw error;
     }

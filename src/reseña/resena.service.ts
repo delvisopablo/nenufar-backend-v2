@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -11,6 +10,7 @@ import { UpdateResenaDto } from './dto/update-resena.dto';
 import { LogroEngineService } from '../logro/logro-engine.service';
 import { NotificacionService } from '../notificacion/notificacion.service';
 import { mapResenaPublic, resenaPublicSelect } from './resena-public.util';
+import { createFieldError } from '../common/errors/app-error';
 
 function toLimit(limit?: number | string, fallback = 10) {
   return Math.max(1, Math.min(50, Number(limit ?? fallback) | 0));
@@ -190,7 +190,10 @@ export class ResenaService {
           });
 
           if (productos.length !== productoIds.length) {
-            throw new BadRequestException(
+            throw createFieldError(
+              'RELATED_RECORD_NOT_FOUND',
+              'Algunos productos no existen o no pertenecen al negocio',
+              'productoIds',
               'Algunos productos no existen o no pertenecen al negocio',
             );
           }
@@ -221,7 +224,10 @@ export class ResenaService {
           const sugerenciasNormalizadas = productosSugeridos.map((item) => {
             const nombre = item.nombre.trim();
             if (!nombre) {
-              throw new BadRequestException(
+              throw createFieldError(
+                'PRODUCT_NAME_REQUIRED',
+                'Los productos sugeridos deben tener nombre',
+                'productosSugeridos',
                 'Los productos sugeridos deben tener nombre',
               );
             }
@@ -328,6 +334,14 @@ export class ResenaService {
       .registrarAccion({
         usuarioId: userId,
         accion: 'RESENAS_5_ESTRELLAS',
+        refId: resenaId,
+      })
+      .catch(() => undefined);
+
+    void this.logroEngine
+      .registrarAccionNegocio({
+        negocioId: dto.negocioId,
+        accion: 'NEGOCIO_RECIBIR_RESENAS',
         refId: resenaId,
       })
       .catch(() => undefined);

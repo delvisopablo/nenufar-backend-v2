@@ -151,30 +151,37 @@ enum NotificacionTipo {
   SISTEMA
 }
 
+enum ListaTipo {
+  FAVORITOS
+  COMPRA
+  CURIOSOS
+  PERSONALIZADA
+}
+
 // ---------- Modelos ----------
 model Usuario {
-  id                 Int          @id @default(autoincrement())
-  nombre             String
-  nickname           String       @unique
-  email              String       @unique
-  password           String
-  codigoReferido     String?      @unique
-  referidoPorId      Int?
-  foto               String?
-  creadoEn           DateTime     @default(now())
-  actualizadoEn      DateTime     @updatedAt
-  eliminadoEn        DateTime?
-  biografia          String?
-  emailVerificado                     Boolean      @default(false)
-  verificadoEn                        DateTime?
-  codigoVerificacionEmailHash         String?
-  codigoVerificacionEmailExpiraEn     DateTime?
-  codigoVerificacionEmailIntentos     Int          @default(0)
+  id                                   Int          @id @default(autoincrement())
+  nombre                               String
+  nickname                             String       @unique
+  email                                String       @unique
+  password                             String
+  codigoReferido                       String?      @unique
+  referidoPorId                        Int?
+  foto                                 String?
+  creadoEn                             DateTime     @default(now())
+  actualizadoEn                        DateTime     @updatedAt
+  eliminadoEn                          DateTime?
+  biografia                            String?
+  emailVerificado                      Boolean      @default(false)
+  verificadoEn                         DateTime?
+  codigoVerificacionEmailHash          String?
+  codigoVerificacionEmailExpiraEn      DateTime?
+  codigoVerificacionEmailIntentos      Int          @default(0)
   codigoVerificacionEmailUltimoEnvioEn DateTime?
-  ultimoLoginEn                       DateTime?
-  welcomeEmailSentAt                  DateTime?
-  estadoCuenta                        EstadoCuenta @default(ACTIVA)
-  rolGlobal                           RolGlobal    @default(USUARIO)
+  ultimoLoginEn                        DateTime?
+  welcomeEmailSentAt                   DateTime?
+  estadoCuenta                         EstadoCuenta @default(ACTIVA)
+  rolGlobal                            RolGlobal    @default(USUARIO)
 
   // Economía de pétalos — separada conceptualmente del flujo transaccional real.
   // TODO: valorar mover PetaloTx a un schema/módulo propio para no contaminar queries de ventas.
@@ -182,28 +189,30 @@ model Usuario {
   petalosTx    PetaloTx[]
 
   // Relaciones
-  referidoPor       Usuario?             @relation("UsuarioReferidos", fields: [referidoPorId], references: [id])
-  referidos         Usuario[]            @relation("UsuarioReferidos")
-  negocios          Negocio[]            @relation("DuenoNegocio")
-  resenas           Resena[]
-  reservas          Reserva[]
-  pedidos           Pedido[]
-  compras           Compra[]
-  pagos             Pago[]
-  comentarios       Comentario[]
-  posts             Post[]
-  logrosUsuario     LogroUsuario[]
-  likes             Like[]
-  negocioMiembros   NegocioMiembro[]
-  siguiendo         UsuarioSeguimiento[] @relation("UsuarioSeguidor")
-  seguidores        UsuarioSeguimiento[] @relation("UsuarioSeguido")
-  siguiendoNegocios NegocioSeguimiento[]
-  visitasNegocio    VisitaNegocio[]
+  referidoPor                 Usuario?                    @relation("UsuarioReferidos", fields: [referidoPorId], references: [id])
+  referidos                   Usuario[]                   @relation("UsuarioReferidos")
+  negocios                    Negocio[]                   @relation("DuenoNegocio")
+  resenas                     Resena[]
+  reservas                    Reserva[]
+  pedidos                     Pedido[]
+  compras                     Compra[]
+  pagos                       Pago[]
+  comentarios                 Comentario[]
+  posts                       Post[]
+  logrosUsuario               LogroUsuario[]
+  logrosDestacados            UsuarioLogroDestacado[]
+  likes                       Like[]
+  negocioMiembros             NegocioMiembro[]
+  siguiendo                   UsuarioSeguimiento[]        @relation("UsuarioSeguidor")
+  seguidores                  UsuarioSeguimiento[]        @relation("UsuarioSeguido")
+  siguiendoNegocios           NegocioSeguimiento[]
+  visitasNegocio              VisitaNegocio[]
   solicitudesProductoCatalogo SolicitudProductoCatalogo[]
-  notificaciones    Notificacion[]
-  adminLogs         AdminLog[]           @relation("AdminLogsAdmin")
-  productosFavoritos ProductoFavorito[]
-  listasCompra      ListaCompra[]
+  notificaciones              Notificacion[]
+  adminLogs                   AdminLog[]                  @relation("AdminLogsAdmin")
+  productosFavoritos          ProductoFavorito[]
+  listasCompra                ListaCompra[]
+  listaCompraCodigos          ListaCompraCodigo[]
 
   @@index([estadoCuenta])
   @@index([rolGlobal])
@@ -280,7 +289,7 @@ model Negocio {
   /// TODO: si crecen las consultas/validaciones, normalizar a tablas HorarioNegocio/HorarioExcepcion.
   horario          Json?
   intervaloReserva Int?
-  reservasActivas  Boolean   @default(false)
+  reservasActivas  Boolean @default(false)
 
   // Subcategoría opcional
   subcategoriaId Int?
@@ -289,20 +298,21 @@ model Negocio {
   categoria Categoria @relation(fields: [categoriaId], references: [id])
   dueno     Usuario   @relation("DuenoNegocio", fields: [duenoId], references: [id])
 
-  productos      Producto[]
-  promociones    Promocion[]
-  resenas        Resena[]
-  reservas       Reserva[]
-  logros         Logro[]
-  posts          Post[]
-  pedidos        Pedido[]
-  compras        Compra[]
-  miembros       NegocioMiembro[]
-  seguidores     NegocioSeguimiento[]
-  visitasNegocio VisitaNegocio[]
-  recursos       RecursoReserva[]
+  productos                   Producto[]
+  promociones                 Promocion[]
+  resenas                     Resena[]
+  reservas                    Reserva[]
+  logros                      Logro[]
+  logrosNegocio               LogroNegocio[]
+  posts                       Post[]
+  pedidos                     Pedido[]
+  compras                     Compra[]
+  miembros                    NegocioMiembro[]
+  seguidores                  NegocioSeguimiento[]
+  visitasNegocio              VisitaNegocio[]
+  recursos                    RecursoReserva[]
   solicitudesProductoCatalogo SolicitudProductoCatalogo[]
-  notificaciones Notificacion[]
+  notificaciones              Notificacion[]
   // TODO: para búsqueda geográfica real conviene un índice geoespacial manual en PostgreSQL/PostGIS.
 
   @@index([categoriaId])
@@ -329,7 +339,7 @@ model Producto {
   negocioId     Int
 
   /// Código interno de producto (SKU). Útil para filtros y búsqueda en dashboard.
-  codigoSKU String?
+  codigoSKU      String?
   codigoProducto String? @unique
 
   /// Stock físico disponible para venta.
@@ -344,12 +354,12 @@ model Producto {
   promocionPrincipal Promocion[] @relation("ProductoPrincipal")
   promociones        Promocion[] @relation("PromocionPack")
 
-  resenasProducto            ResenaProducto[]
-  solicitudesCatalogo        SolicitudProductoCatalogo[]
-  pedidoProductos PedidoProducto[]
-  Logro           Logro[]
-  favoritos       ProductoFavorito[]
-  listaCompraItems ListaCompraItem[]
+  resenasProducto     ResenaProducto[]
+  solicitudesCatalogo SolicitudProductoCatalogo[]
+  pedidoProductos     PedidoProducto[]
+  Logro               Logro[]
+  favoritos           ProductoFavorito[]
+  listaCompraItems    ListaCompraItem[]
 
   @@index([negocioId])
   @@index([activo])
@@ -371,14 +381,25 @@ model ProductoFavorito {
 }
 
 model ListaCompra {
-  id            Int      @id @default(autoincrement())
-  usuarioId     Int      @unique
-  nombre        String   @default("Mi lista de la compra")
-  creadaEn      DateTime @default(now())
-  actualizadaEn DateTime @updatedAt
+  id            Int       @id @default(autoincrement())
+  usuarioId     Int
+  nombre        String    @default("Mi lista de la compra")
+  tipo          ListaTipo @default(PERSONALIZADA)
+  descripcion   String?
+  color         String?
+  iconoNenufar  String?
+  creadaEn      DateTime  @default(now())
+  actualizadaEn DateTime  @updatedAt
+  eliminadaEn   DateTime?
 
-  usuario Usuario           @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  usuario Usuario             @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
   items   ListaCompraItem[]
+  pedidos Pedido[]
+  codigos ListaCompraCodigo[]
+
+  @@unique([usuarioId, nombre])
+  @@index([usuarioId])
+  @@index([tipo])
 }
 
 model ListaCompraItem {
@@ -398,6 +419,28 @@ model ListaCompraItem {
   @@index([listaCompraId])
   @@index([productoId])
   @@index([completado])
+}
+
+/// Código corto para compartir/importar una Nenulista como copia independiente.
+/// El snapshot queda fijado en el momento de generar el código: si el dueño
+/// modifica su lista después, los códigos ya emitidos no cambian.
+model ListaCompraCodigo {
+  id              Int      @id @default(autoincrement())
+  codigo          String   @unique
+  listaCompraId   Int?
+  usuarioOrigenId Int
+  nombreSnapshot  String
+  snapshot        Json
+  creadoEn        DateTime @default(now())
+  usadoVeces      Int      @default(0)
+  activo          Boolean  @default(true)
+
+  usuarioOrigen Usuario      @relation(fields: [usuarioOrigenId], references: [id], onDelete: Cascade)
+  listaCompra   ListaCompra? @relation(fields: [listaCompraId], references: [id], onDelete: SetNull)
+
+  @@index([codigo])
+  @@index([usuarioOrigenId])
+  @@index([activo])
 }
 
 model Post {
@@ -453,10 +496,10 @@ model Resena {
   actualizadoEn    DateTime        @updatedAt
   eliminadoEn      DateTime?
 
-  negocio  Negocio   @relation(fields: [negocioId], references: [id])
-  usuario  Usuario   @relation(fields: [usuarioId], references: [id])
-  Post     Post[]
-  productos ResenaProducto[]
+  negocio            Negocio                     @relation(fields: [negocioId], references: [id])
+  usuario            Usuario                     @relation(fields: [usuarioId], references: [id])
+  Post               Post[]
+  productos          ResenaProducto[]
   productosSugeridos SolicitudProductoCatalogo[]
   // TODO: no se impone @@unique([usuarioId, negocioId]) para permitir histórico de reseñas.
   // Si se quiere una sola reseña activa por usuario y negocio, conviene hacerlo en backend o con índice único parcial SQL.
@@ -551,21 +594,21 @@ model Promocion {
 }
 
 model Logro {
-  id               Int        @id @default(autoincrement())
+  id               Int            @id @default(autoincrement())
   titulo           String
   descripcion      String?
   tipo             LogroTipo
   categoriaLogro   LogroCategoria @default(GENERAL)
-  oculto           Boolean    @default(false)
-  esFinal          Boolean    @default(false)
+  oculto           Boolean        @default(false)
+  esFinal          Boolean        @default(false)
   accion           String?
-  dificultad       Dificultad @default(FACIL)
+  dificultad       Dificultad     @default(FACIL)
   /// TODO: validar en backend/SQL manual que umbral > 0.
   umbral           Int
   /// TODO: validar en backend/SQL manual que recompensaPuntos >= 0.
   recompensaPuntos Int
-  creadoEn         DateTime   @default(now())
-  actualizadoEn    DateTime   @updatedAt
+  creadoEn         DateTime       @default(now())
+  actualizadoEn    DateTime       @updatedAt
 
   categoriaId    Int?
   subcategoriaId Int?
@@ -578,6 +621,8 @@ model Logro {
   producto     Producto?     @relation(fields: [productoId], references: [id])
 
   logrosUsuario LogroUsuario[]
+  logrosNegocio LogroNegocio[]
+  destacadoPorUsuarios UsuarioLogroDestacado[]
   Post          Post[]
 
   @@index([categoriaId])
@@ -606,8 +651,15 @@ model Pedido {
   creadoEn      DateTime     @default(now())
   actualizadoEn DateTime     @updatedAt
 
+  /// Lista de Mi Nenulista desde la que se cerró este pedido (si aplica).
+  /// La lista puede seguir editándose después: este pedido no debe verse afectado,
+  /// por eso se conserva `listaCompraSnapshot` con el estado exacto al cerrar.
+  listaCompraId       Int?
+  listaCompraSnapshot Json?
+
   negocio         Negocio          @relation(fields: [negocioId], references: [id])
   usuario         Usuario?         @relation(fields: [usuarioId], references: [id])
+  listaCompra     ListaCompra?     @relation(fields: [listaCompraId], references: [id], onDelete: SetNull)
   pedidoProductos PedidoProducto[]
   compras         Compra[]
 
@@ -615,6 +667,7 @@ model Pedido {
   @@index([usuarioId])
   @@index([estado, creadoEn])
   @@index([canalVenta])
+  @@index([listaCompraId])
 }
 
 model Compra {
@@ -808,6 +861,40 @@ model LogroUsuario {
   @@unique([logroId, usuarioId])
   @@index([usuarioId])
   @@index([conseguido])
+}
+
+model LogroNegocio {
+  id            Int       @id @default(autoincrement())
+  logroId       Int
+  negocioId     Int
+  progreso      Int       @default(0)
+  veces         Int       @default(0)
+  conseguido    Boolean   @default(false)
+  conseguidoEn  DateTime?
+  actualizadoEn DateTime  @updatedAt
+
+  logro   Logro   @relation(fields: [logroId], references: [id], onDelete: Cascade)
+  negocio Negocio @relation(fields: [negocioId], references: [id], onDelete: Cascade)
+
+  @@unique([logroId, negocioId])
+  @@index([negocioId])
+  @@index([conseguido])
+}
+
+model UsuarioLogroDestacado {
+  id            Int      @id @default(autoincrement())
+  usuarioId     Int
+  logroId       Int
+  posicion      Int
+  creadoEn      DateTime @default(now())
+  actualizadoEn DateTime @updatedAt
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  logro   Logro   @relation(fields: [logroId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, posicion])
+  @@unique([usuarioId, logroId])
+  @@index([usuarioId])
 }
 
 model NegocioMiembro {

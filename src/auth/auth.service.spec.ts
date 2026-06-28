@@ -1,12 +1,7 @@
 /// <reference types="jest" />
 /* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access */
 
-import {
-  BadRequestException,
-  ConflictException,
-  Logger,
-  UnauthorizedException,
-} from '@nestjs/common';
+import { Logger, UnauthorizedException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { EstadoCuenta, Prisma, RolGlobal } from '@prisma/client';
 import { JwtService } from '@nestjs/jwt';
@@ -167,7 +162,7 @@ describe('AuthService', () => {
     expect(service).toBeDefined();
   });
 
-  it('register crea usuario, emite cookies y devuelve usuario público compatible', async () => {
+  it('register crea usuario y requiere verificación de email', async () => {
     prisma.usuario.findFirst.mockResolvedValue(null);
     prisma.usuario.create.mockResolvedValue({
       id: 7,
@@ -203,6 +198,8 @@ describe('AuthService', () => {
         id: true,
         email: true,
         nickname: true,
+        emailVerificado: true,
+        codigoVerificacionEmailHash: true,
       },
     });
     expect(prisma.usuario.create).toHaveBeenCalledWith(
@@ -215,17 +212,12 @@ describe('AuthService', () => {
         }),
       }),
     );
-    expect(res.cookie).toHaveBeenCalledTimes(2);
+    expect(res.cookie).not.toHaveBeenCalled();
     expect(nenufarizarService.procesarReferido).not.toHaveBeenCalled();
     expect(result).toEqual(
       expect.objectContaining({
-        access_token: 'access-token',
-        usuario: expect.objectContaining({
-          id: 7,
-          nombre: 'Ada',
-          nickname: 'ada',
-          email: 'ada@example.com',
-        }),
+        ok: true,
+        requiresEmailVerification: true,
       }),
     );
   });
@@ -274,15 +266,7 @@ describe('AuthService', () => {
       }),
     });
     expect(result).toEqual({
-      access_token: 'access-token',
-      usuario: expect.objectContaining({
-        id: 7,
-        email: 'ada@example.com',
-      }),
-      user: expect.objectContaining({
-        id: 7,
-        email: 'ada@example.com',
-      }),
+      ok: true,
       requiresEmailVerification: true,
       emailVerification: {
         email: 'ad***@example.com',
@@ -386,11 +370,7 @@ describe('AuthService', () => {
 
     expect(result).toEqual(
       expect.objectContaining({
-        access_token: 'access-token',
-        usuario: expect.objectContaining({
-          id: 7,
-          email: 'ada@example.com',
-        }),
+        ok: true,
         requiresEmailVerification: true,
       }),
     );
@@ -431,7 +411,11 @@ describe('AuthService', () => {
       ),
     ).rejects.toEqual(
       expect.objectContaining({
-        message: 'Email o nickname ya en uso',
+        code: 'EMAIL_ALREADY_IN_USE',
+        message: 'Este correo ya está en uso.',
+        details: expect.objectContaining({
+          fieldErrors: { email: 'Este correo ya está en uso.' },
+        }),
       }),
     );
   });
@@ -503,11 +487,8 @@ describe('AuthService', () => {
 
     expect(result).toEqual(
       expect.objectContaining({
-        access_token: 'access-token',
-        usuario: expect.objectContaining({
-          id: 7,
-          nombre: 'Ada',
-        }),
+        ok: true,
+        requiresEmailVerification: true,
       }),
     );
     expect(nenufarizarService.procesarReferido).toHaveBeenCalledWith(
@@ -519,8 +500,11 @@ describe('AuthService', () => {
 
   it('register devuelve 409 cuando email o nickname ya existen', async () => {
     prisma.usuario.findFirst.mockResolvedValue({
+      id: 7,
       email: 'ada@example.com',
       nickname: 'ada',
+      emailVerificado: true,
+      codigoVerificacionEmailHash: null,
     });
 
     await expect(
@@ -533,7 +517,10 @@ describe('AuthService', () => {
         },
         { cookie: jest.fn() } as any,
       ),
-    ).rejects.toBeInstanceOf(ConflictException);
+    ).rejects.toMatchObject({
+      code: 'EMAIL_ALREADY_IN_USE',
+      message: 'Este correo ya está en uso.',
+    });
   });
 
   it('registerNegocio crea usuario y negocio, inicia sesion y devuelve access_token', async () => {
@@ -631,47 +618,9 @@ describe('AuthService', () => {
     });
     expect(prisma.codigoNenufarizacion.findUnique).not.toHaveBeenCalled();
     expect(prisma.codigoNenufarizacion.update).not.toHaveBeenCalled();
-    expect(res.cookie).toHaveBeenCalledTimes(2);
+    expect(res.cookie).not.toHaveBeenCalled();
     expect(result).toEqual({
-      access_token: 'business-access-token',
-      usuario: {
-        id: 11,
-        nombre: 'Pablo',
-        nickname: 'pablo',
-        email: 'pablo@example.com',
-        rolGlobal: RolGlobal.USUARIO,
-        rol: 'negocio',
-        negocio: {
-          id: 25,
-          nombre: 'Cafe Nenufar',
-          slug: 'cafe-nenufar',
-          horario: null,
-          intervaloReserva: null,
-          reservasActivas: false,
-          nenufarColor: null,
-          nenufarActivo: 'nenufar-loto-rosa',
-          nenufarAsset: 'nenufar-loto-rosa',
-        },
-      },
-      user: {
-        id: 11,
-        nombre: 'Pablo',
-        nickname: 'pablo',
-        email: 'pablo@example.com',
-        rolGlobal: RolGlobal.USUARIO,
-        rol: 'negocio',
-        negocio: {
-          id: 25,
-          nombre: 'Cafe Nenufar',
-          slug: 'cafe-nenufar',
-          horario: null,
-          intervaloReserva: null,
-          reservasActivas: false,
-          nenufarColor: null,
-          nenufarActivo: 'nenufar-loto-rosa',
-          nenufarAsset: 'nenufar-loto-rosa',
-        },
-      },
+      ok: true,
       requiresEmailVerification: true,
       emailVerification: {
         email: 'pa***@example.com',
@@ -781,7 +730,11 @@ describe('AuthService', () => {
         },
         { cookie: jest.fn() } as any,
       ),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({
+      code: 'INVALID_SCHEDULE',
+      message:
+        'Si las reservas estan activas, debe haber al menos un dia abierto',
+    });
 
     expect(prisma.negocio.create).not.toHaveBeenCalled();
   });
@@ -830,7 +783,7 @@ describe('AuthService', () => {
       biografia: null,
       creadoEn: new Date(),
       actualizadoEn: new Date(),
-      emailVerificado: false,
+      emailVerificado: true,
       estadoCuenta: EstadoCuenta.ACTIVA,
       rolGlobal: RolGlobal.USUARIO,
       petalosSaldo: 0,
@@ -881,7 +834,7 @@ describe('AuthService', () => {
       biografia: null,
       creadoEn: new Date(),
       actualizadoEn: new Date(),
-      emailVerificado: false,
+      emailVerificado: true,
       estadoCuenta: EstadoCuenta.ACTIVA,
       rolGlobal: RolGlobal.USUARIO,
       petalosSaldo: 0,
@@ -1610,7 +1563,10 @@ describe('AuthService', () => {
         email: 'ada@example.com',
         code: '654321',
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({
+      code: 'VERIFICATION_CODE_INVALID',
+      message: 'Código de verificación incorrecto',
+    });
 
     expect(prisma.usuario.update).toHaveBeenCalledWith({
       where: { id: 7 },
@@ -2068,6 +2024,8 @@ describe('AuthService', () => {
     await expect(
       service.me(
         {
+          cookies: {},
+          headers: {},
           user: {
             id: 9,
           },

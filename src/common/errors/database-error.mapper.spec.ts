@@ -10,14 +10,17 @@ describe('mapDatabaseError', () => {
 
     expect(result).toEqual(
       expect.objectContaining({
-        code: 'CONFLICT',
+        code: 'EMAIL_ALREADY_IN_USE',
         statusCode: 409,
-        message: 'Ya existe un registro con esos datos',
+        message: 'Este correo ya está en uso.',
+        details: expect.objectContaining({
+          fieldErrors: { email: 'Este correo ya está en uso.' },
+        }),
       }),
     );
   });
 
-  it('mapea foreign key violation de PostgreSQL a 409', () => {
+  it('mapea foreign key violation de PostgreSQL a relación inexistente', () => {
     const result = mapDatabaseError({
       code: '23503',
       constraint: 'Reserva_usuarioId_fkey',
@@ -25,9 +28,9 @@ describe('mapDatabaseError', () => {
 
     expect(result).toEqual(
       expect.objectContaining({
-        code: 'CONFLICT',
-        statusCode: 409,
-        message: 'La relación indicada no existe',
+        code: 'RELATED_RECORD_NOT_FOUND',
+        statusCode: 400,
+        message: 'El negocio, producto o usuario indicado no existe.',
       }),
     );
   });

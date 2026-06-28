@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  NotFoundException,
-} from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ContenidoEstado, EstadoCuenta, ReservaEstado } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -40,6 +36,7 @@ describe('NegocioService', () => {
     };
     negocioSeguimiento: {
       deleteMany: jest.Mock;
+      findMany: jest.Mock;
       findUnique: jest.Mock;
     };
     notificacion: {
@@ -80,6 +77,7 @@ describe('NegocioService', () => {
       },
       negocioSeguimiento: {
         deleteMany: jest.fn(),
+        findMany: jest.fn(),
         findUnique: jest.fn(),
       },
       notificacion: {
@@ -111,6 +109,7 @@ describe('NegocioService', () => {
             procesarVisitaNegocio: jest.fn(),
             procesarSeguimientoNegocio: jest.fn(),
             registrarAccion: jest.fn(),
+            registrarAccionNegocio: jest.fn(),
           },
         },
       ],
@@ -143,6 +142,106 @@ describe('NegocioService', () => {
         eliminadoEn: null,
       }),
     });
+  });
+
+  function buildInicioNegocio(id: number, nombre = `Negocio ${id}`) {
+    return {
+      id,
+      nombre,
+      slug: `negocio-${id}`,
+      descripcionCorta: null,
+      fotoPerfil: null,
+      nenufarColor: null,
+      nenufarKey: null,
+      nenufarAsset: null,
+      categoriaId: 2,
+      categoria: { id: 2, nombre: 'Cafeteria' },
+      subcategoriaId: 5,
+      subcategoria: { id: 5, nombre: 'Brunch' },
+      creadoEn: new Date('2026-06-27T10:00:00.000Z'),
+    };
+  }
+
+  it('inicio anonimo devuelve negocios activos filtrados sin requerir auth', async () => {
+    prisma.negocio.findMany.mockResolvedValue([
+      buildInicioNegocio(1),
+      buildInicioNegocio(2),
+    ]);
+
+    const result = await service.listInicio({
+      categoriaId: 2,
+      subcategoriaId: 5,
+      q: 'cafe',
+      limit: 12,
+    });
+
+    expect(prisma.negocio.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          activo: true,
+          eliminadoEn: null,
+          categoriaId: 2,
+          subcategoriaId: 5,
+          OR: expect.arrayContaining([
+            expect.objectContaining({
+              nombre: expect.objectContaining({ contains: 'cafe' }),
+            }),
+          ]),
+        }),
+      }),
+    );
+    expect(result).toHaveLength(2);
+    expect(result.every((item) => item.seguidoPorMi === false)).toBe(true);
+  });
+
+  it('inicio prioriza negocios seguidos y completa con descubrimiento', async () => {
+    prisma.negocioSeguimiento.findMany.mockResolvedValue([
+      { negocioId: 7, negocio: buildInicioNegocio(7, 'Seguido') },
+    ]);
+    prisma.negocio.findMany.mockResolvedValue([
+      buildInicioNegocio(8, 'Descubrimiento 1'),
+      buildInicioNegocio(9, 'Descubrimiento 2'),
+    ]);
+
+    const result = await service.listInicio({ limit: 3 }, 99);
+
+    expect(result).toHaveLength(3);
+    expect(result[0]).toEqual(
+      expect.objectContaining({ id: 7, seguidoPorMi: true }),
+    );
+    expect(result.slice(1).every((item) => item.seguidoPorMi === false)).toBe(
+      true,
+    );
+    expect(new Set(result.map((item) => item.id)).size).toBe(result.length);
+  });
+
+  it('inicio con cinco o mas seguidos incluye descubrimientos no seguidos', async () => {
+    prisma.negocioSeguimiento.findMany.mockResolvedValue(
+      [1, 2, 3, 4, 5].map((id) => ({
+        negocioId: id,
+        negocio: buildInicioNegocio(id, `Seguido ${id}`),
+      })),
+    );
+    prisma.negocio.findMany.mockResolvedValue([
+      buildInicioNegocio(21, 'Nuevo 1'),
+      buildInicioNegocio(22, 'Nuevo 2'),
+      buildInicioNegocio(23, 'Nuevo 3'),
+    ]);
+
+    const result = await service.listInicio({ limit: 6 }, 99);
+
+    expect(result).toHaveLength(6);
+    expect(result.slice(0, 3).every((item) => item.seguidoPorMi)).toBe(true);
+    expect(result.slice(3).every((item) => item.seguidoPorMi === false)).toBe(
+      true,
+    );
+    expect(prisma.negocio.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: { notIn: [1, 2, 3, 4, 5] },
+        }),
+      }),
+    );
   });
 
   it('getBySlug acepta nombres y los normaliza a slug', async () => {
@@ -381,7 +480,11 @@ describe('NegocioService', () => {
         },
         9,
       ),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).rejects.toMatchObject({
+      code: 'INVALID_SCHEDULE',
+      message:
+        'Si las reservas estan activas, debe haber al menos un dia abierto',
+    });
 
     expect(prisma.negocio.update).not.toHaveBeenCalled();
   });

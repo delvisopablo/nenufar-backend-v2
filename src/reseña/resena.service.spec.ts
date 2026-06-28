@@ -81,6 +81,7 @@ describe('ResenaService', () => {
   };
   let logroEngine: {
     registrarAccion: jest.Mock;
+    registrarAccionNegocio: jest.Mock;
   };
 
   beforeEach(() => {
@@ -137,6 +138,7 @@ describe('ResenaService', () => {
 
     logroEngine = {
       registrarAccion: jest.fn().mockResolvedValue(undefined),
+      registrarAccionNegocio: jest.fn().mockResolvedValue(undefined),
     };
 
     service = new ResenaService(

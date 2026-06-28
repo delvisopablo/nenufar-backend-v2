@@ -6,12 +6,11 @@ import {
   IsInt,
   IsArray,
   IsNumber,
+  IsNotEmpty,
   Min,
   IsEnum,
   MaxLength,
-  IsPositive,
   ArrayUnique,
-  IsString as IsStringEach,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ContenidoEstado, TipoDescuento } from '@prisma/client';
@@ -19,6 +18,8 @@ import { ContenidoEstado, TipoDescuento } from '@prisma/client';
 export class CreatePromocionDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
+  @IsNotEmpty()
+  @MaxLength(160)
   titulo: string;
 
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
@@ -30,9 +31,11 @@ export class CreatePromocionDto {
   @IsDateString()
   fechaInicio?: string;
 
+  @IsNotEmpty()
   @IsDateString()
   fechaCaducidad: string; // 👈 ISO date
 
+  @Type(() => Number)
   @IsNumber()
   @Min(0)
   descuento: number;
@@ -70,6 +73,7 @@ export class CreatePromocionDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(1)
   productoId?: number; // producto principal
 
   @IsOptional()
@@ -81,5 +85,6 @@ export class CreatePromocionDto {
 
   @Type(() => Number)
   @IsInt()
+  @Min(1)
   negocioId: number;
 }

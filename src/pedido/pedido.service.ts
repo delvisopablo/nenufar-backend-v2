@@ -22,6 +22,7 @@ import { QueryNegocioPedidosDto } from './dto/query-negocio-pedidos.dto';
 import { UpdateItemDto } from './dto/update-item.dto';
 import { UpdatePagoEstadoDto } from './dto/update-pago-estado.dto';
 import { UpdatePedidoDto } from './dto/update-pedido.dto';
+import { AccionLogroNegocio } from '../logro/logro-accion';
 
 function toPaging(page?: number | string, limit?: number | string) {
   const p = Math.max(1, Number(page ?? 1) | 0);
@@ -40,12 +41,28 @@ export class PedidoService {
     private readonly logroEngine: LogroEngineService,
   ) {}
 
+  private registrarLogroNegocioEnSegundoPlano(
+    negocioId: number,
+    accion: AccionLogroNegocio,
+    refId?: number,
+  ) {
+    void Promise.resolve()
+      .then(() =>
+        this.logroEngine.registrarAccionNegocio({
+          negocioId,
+          accion,
+          refId,
+        }),
+      )
+      .catch(() => undefined);
+  }
+
   private async assertCanManageNegocio(negocioId: number, actorUserId: number) {
     if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
       throw new UnauthorizedException('Autenticación requerida');
     }
 
-    const [negocio, actor] = await this.prisma.$transaction([
+    const [negocio, actor, miembro] = await this.prisma.$transaction([
       this.prisma.negocio.findUnique({
         where: { id: negocioId },
         select: { id: true, duenoId: true },
@@ -54,12 +71,21 @@ export class PedidoService {
         where: { id: actorUserId },
         select: { id: true, rolGlobal: true },
       }),
+      this.prisma.negocioMiembro.findUnique({
+        where: {
+          negocioId_usuarioId: {
+            negocioId,
+            usuarioId: actorUserId,
+          },
+        },
+        select: { usuarioId: true },
+      }),
     ]);
 
     if (!negocio) throw new NotFoundException('Negocio no encontrado');
     if (!actor) throw new UnauthorizedException('Usuario no autenticado');
 
-    if (negocio.duenoId === actorUserId) {
+    if (negocio.duenoId === actorUserId || miembro) {
       return negocio;
     }
 
@@ -263,11 +289,11 @@ export class PedidoService {
   async updatePedido(id: number, dto: UpdatePedidoDto) {
     const pedido = await this.prisma.pedido.findUnique({
       where: { id },
-      select: { id: true },
+      select: { id: true, negocioId: true, estado: true },
     });
     if (!pedido) throw new NotFoundException('Pedido no encontrado');
 
-    return this.prisma.pedido.update({
+    const actualizado = await this.prisma.pedido.update({
       where: { id },
       data: {
         ...(dto.estado !== undefined ? { estado: dto.estado } : {}),
@@ -280,6 +306,94 @@ export class PedidoService {
         negocio: { select: { id: true, nombre: true } },
       },
     });
+
+    if (
+      dto.estado === PedidoEstado.COMPLETADO &&
+      pedido.estado !== PedidoEstado.COMPLETADO
+    ) {
+      this.registrarLogroNegocioEnSegundoPlano(
+        pedido.negocioId,
+        'NEGOCIO_COMPLETAR_PEDIDOS',
+        pedido.id,
+      );
+    }
+
+    return actualizado;
+  }
+
+  /** Cambia el estado de un pedido. Solo dueño/miembro del negocio o admin. */
+  async actualizarEstadoPedido(
+    pedidoId: number,
+    actorUserId: number,
+    estado: PedidoEstado,
+  ) {
+    const pedido = await this.prisma.pedido.findUnique({
+      where: { id: pedidoId },
+      select: { id: true, negocioId: true, estado: true },
+    });
+    if (!pedido) throw new NotFoundException('Pedido no encontrado');
+
+    await this.assertCanManageNegocio(pedido.negocioId, actorUserId);
+
+    const actualizado = await this.prisma.pedido.update({
+      where: { id: pedidoId },
+      data: { estado },
+      include: {
+        usuario: { select: { id: true, nombre: true, nickname: true } },
+        negocio: { select: { id: true, nombre: true } },
+      },
+    });
+
+    if (
+      estado === PedidoEstado.COMPLETADO &&
+      pedido.estado !== PedidoEstado.COMPLETADO
+    ) {
+      this.registrarLogroNegocioEnSegundoPlano(
+        pedido.negocioId,
+        'NEGOCIO_COMPLETAR_PEDIDOS',
+        pedido.id,
+      );
+    }
+
+    return actualizado;
+  }
+
+  /** Historial de pedidos generados al cerrar listas de Mi Nenulista. */
+  async listHistorialNenulista(usuarioId: number) {
+    const pedidos = await this.prisma.pedido.findMany({
+      where: { usuarioId, listaCompraId: { not: null } },
+      include: {
+        negocio: {
+          select: { id: true, nombre: true, slug: true, fotoPerfil: true },
+        },
+        listaCompra: { select: { id: true, nombre: true } },
+        pedidoProductos: {
+          select: {
+            id: true,
+            productoId: true,
+            cantidad: true,
+            precioUnitario: true,
+            subtotal: true,
+            producto: { select: { id: true, nombre: true, foto: true } },
+          },
+          orderBy: { id: 'asc' },
+        },
+      },
+      orderBy: { creadoEn: 'desc' },
+    });
+
+    return pedidos.map((pedido) => ({
+      pedidoId: pedido.id,
+      fecha: pedido.creadoEn,
+      estado: pedido.estado,
+      negocio: pedido.negocio,
+      total: pedido.totalSnapshot,
+      items: pedido.pedidoProductos,
+      listaOrigen: pedido.listaCompra
+        ? { id: pedido.listaCompra.id, nombre: pedido.listaCompra.nombre }
+        : null,
+      snapshot: pedido.listaCompraSnapshot,
+    }));
   }
 
   async addItem(pedidoId: number, dto: AddItemDto) {

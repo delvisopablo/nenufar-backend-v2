@@ -6,9 +6,12 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { EstadoSolicitudProducto, Prisma, RolGlobal } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ListaCompraService } from '../lista-compra/lista-compra.service';
+import { LogroEngineService } from '../logro/logro-engine.service';
 import { CreateProductoDto } from './dto/create-producto.dto';
 import { UpdateProductoDto } from './dto/update-producto.dto';
 import { UpdateProductoStockDto } from './dto/update-producto-stock.dto';
@@ -25,6 +28,7 @@ import {
   productoCatalogSelect,
   solicitudProductoSelect,
 } from './producto-catalogo.util';
+import { createFieldError } from '../common/errors/app-error';
 
 const productoConNegocioSelect = {
   ...productoCatalogSelect,
@@ -71,9 +75,28 @@ function mapProductoConNegocio(
   };
 }
 
+function productNameRequiredError(
+  message = 'El nombre del producto es obligatorio',
+) {
+  return createFieldError('PRODUCT_NAME_REQUIRED', message, 'nombre', message);
+}
+
+function invalidPriceError(message = 'El precio no puede ser negativo') {
+  return createFieldError('INVALID_PRICE', message, 'precio', message);
+}
+
+function invalidStockError(message = 'El stock no puede ser negativo') {
+  return createFieldError('INVALID_STOCK', message, 'stockDisponible', message);
+}
+
 @Injectable()
 export class ProductoService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly listaCompraService: ListaCompraService,
+    @Optional()
+    private readonly logroEngine?: LogroEngineService,
+  ) {}
 
   private async assertCanManageNegocio(
     negocioId: number,
@@ -189,32 +212,30 @@ export class ProductoService {
   ) {
     const nombre = dto.nombre.trim();
     if (!nombre) {
-      throw new BadRequestException('El nombre del producto es obligatorio');
+      throw productNameRequiredError();
     }
 
     if (
       (dto.precio === undefined || dto.precio === null) &&
       !options?.allowNullPrice
     ) {
-      throw new BadRequestException('El precio del producto es obligatorio');
+      throw invalidPriceError('El precio del producto es obligatorio');
     }
 
     if (dto.precio !== undefined && dto.precio !== null) {
       const precioNumerico = Number(dto.precio);
       if (Number.isNaN(precioNumerico) || precioNumerico < 0) {
-        throw new BadRequestException('El precio no puede ser negativo');
+        throw invalidPriceError();
       }
     }
 
     const stockDisponible = dto.stockDisponible ?? 0;
     const stockReservado = dto.stockReservado ?? 0;
     if (stockDisponible < 0 || stockReservado < 0) {
-      throw new BadRequestException(
-        'Los valores de stock no pueden ser negativos',
-      );
+      throw invalidStockError('Los valores de stock no pueden ser negativos');
     }
     if (stockReservado > stockDisponible) {
-      throw new BadRequestException(
+      throw invalidStockError(
         'stockReservado no puede superar stockDisponible',
       );
     }
@@ -320,16 +341,31 @@ export class ProductoService {
     };
   }
 
-  async search(q = '', limit?: number | string, usuarioId?: number) {
+  async search(
+    q = '',
+    limit?: number | string,
+    usuarioId?: number,
+    filtros?: {
+      categoriaId?: number | string;
+      subcategoriaId?: number | string;
+      negocioId?: number | string;
+    },
+  ) {
     const term = q.trim();
     const take = Math.max(1, Math.min(50, Number(limit ?? 20) | 0));
+    const categoriaId = Number(filtros?.categoriaId);
+    const subcategoriaId = Number(filtros?.subcategoriaId);
+    const negocioId = Number(filtros?.negocioId);
     const items = await this.prisma.producto.findMany({
       where: {
         activo: true,
         eliminadoEn: null,
+        ...(Number.isInteger(negocioId) ? { negocioId } : {}),
         negocio: {
           activo: true,
           eliminadoEn: null,
+          ...(Number.isInteger(categoriaId) ? { categoriaId } : {}),
+          ...(Number.isInteger(subcategoriaId) ? { subcategoriaId } : {}),
         },
         ...(term
           ? {
@@ -369,6 +405,7 @@ export class ProductoService {
             nenufarActivo: true,
             nenufarAsset: true,
             categoria: { select: { id: true, nombre: true } },
+            subcategoria: { select: { id: true, nombre: true } },
             dueno: { select: { id: true, nickname: true } },
           },
         },
@@ -396,6 +433,7 @@ export class ProductoService {
           precio: producto.precio,
           slug: item.negocio.slug,
           categoria: item.negocio.categoria,
+          subcategoria: item.negocio.subcategoria,
           negocioNickname: item.negocio.dueno.nickname,
           nenufarActivo:
             item.negocio.nenufarActivo ?? item.negocio.nenufarAsset ?? null,
@@ -471,6 +509,12 @@ export class ProductoService {
       select: { creadoEn: true },
     });
 
+    await this.listaCompraService.sincronizarFavorito(
+      usuarioId,
+      productoId,
+      true,
+    );
+
     return {
       favorito: true,
       favoritoCreadoEn: favorito.creadoEn,
@@ -482,6 +526,12 @@ export class ProductoService {
     await this.prisma.productoFavorito.deleteMany({
       where: { usuarioId, productoId },
     });
+
+    await this.listaCompraService.sincronizarFavorito(
+      usuarioId,
+      productoId,
+      false,
+    );
 
     return { favorito: false };
   }
@@ -498,6 +548,14 @@ export class ProductoService {
     const producto = await this.prisma.$transaction((tx) =>
       this.createCatalogProduct(tx, negocioId, dto),
     );
+
+    void this.logroEngine
+      ?.registrarAccionNegocio({
+        negocioId,
+        accion: 'NEGOCIO_TENER_PRODUCTOS',
+        refId: producto.id,
+      })
+      .catch(() => undefined);
 
     return mapProductoCatalogo(producto);
   }
@@ -523,19 +581,17 @@ export class ProductoService {
     const nextStockDisponible = dto.stockDisponible ?? prod.stockDisponible;
     const nextStockReservado = dto.stockReservado ?? prod.stockReservado;
     if (nextStockDisponible < 0 || nextStockReservado < 0) {
-      throw new BadRequestException(
-        'Los valores de stock no pueden ser negativos',
-      );
+      throw invalidStockError('Los valores de stock no pueden ser negativos');
     }
     if (nextStockReservado > nextStockDisponible) {
-      throw new BadRequestException(
+      throw invalidStockError(
         'stockReservado no puede superar stockDisponible',
       );
     }
 
     try {
       if (dto.nombre !== undefined && !dto.nombre.trim()) {
-        throw new BadRequestException(
+        throw productNameRequiredError(
           'El nombre del producto no puede estar vacío',
         );
       }
@@ -583,6 +639,32 @@ export class ProductoService {
     }
   }
 
+  /** Actualiza la foto del producto (solo dueño del negocio o admin) */
+  async actualizarFoto(
+    negocioId: number,
+    productoId: number,
+    fotoUrl: string,
+    currentUserId: number,
+    isAdmin = false,
+  ) {
+    const prod = await this.prisma.producto.findUnique({
+      where: { id: productoId },
+      select: { id: true, negocioId: true },
+    });
+    if (!prod || prod.negocioId !== negocioId) {
+      throw new NotFoundException('Producto no encontrado');
+    }
+    await this.assertCanManageNegocio(negocioId, currentUserId, isAdmin);
+
+    const updated = await this.prisma.producto.update({
+      where: { id: productoId },
+      data: { foto: fotoUrl },
+      select: productoCatalogSelect,
+    });
+
+    return mapProductoCatalogo(updated);
+  }
+
   /** Borrado lógico del producto (solo dueño o admin) */
   async remove(id: number, currentUserId: number, isAdmin = false) {
     const prod = await this.prisma.producto.findUnique({
@@ -611,9 +693,7 @@ export class ProductoService {
     isAdmin = false,
   ) {
     if (dto.deltaDisponible === undefined && dto.deltaReservado === undefined) {
-      throw new BadRequestException(
-        'Debes indicar al menos un ajuste de stock',
-      );
+      throw invalidStockError('Debes indicar al menos un ajuste de stock');
     }
 
     const producto = await this.prisma.producto.findUnique({
@@ -639,11 +719,11 @@ export class ProductoService {
       producto.stockReservado + (dto.deltaReservado ?? 0);
 
     if (nextStockDisponible < 0 || nextStockReservado < 0) {
-      throw new BadRequestException('El ajuste dejaría el stock en negativo');
+      throw invalidStockError('El ajuste dejaría el stock en negativo');
     }
 
     if (nextStockReservado > nextStockDisponible) {
-      throw new BadRequestException(
+      throw invalidStockError(
         'stockReservado no puede superar stockDisponible',
       );
     }

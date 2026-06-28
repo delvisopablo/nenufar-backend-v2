@@ -29,7 +29,7 @@ import { CreateNegocioMiembroDto } from './dto/create-negocio-miembro.dto';
 import { UpdateNegocioMiembroDto } from './dto/update-negocio-miembro.dto';
 import { CreateVisitaNegocioDto } from './dto/create-visita-negocio.dto';
 import { LogroEngineService } from '../logro/logro-engine.service';
-import { AccionLogro } from '../logro/logro-accion';
+import { AccionLogro, AccionLogroNegocio } from '../logro/logro-accion';
 import {
   generateUniqueNegocioSlug,
   slugifyNegocioNombre,
@@ -41,11 +41,34 @@ import {
   normalizeHorarioInput,
   summarizeHorarioForLog,
 } from './horario.util';
+import { createFieldError } from '../common/errors/app-error';
 
 function toPaging(page?: number | string, limit?: number | string) {
   const p = Math.max(1, Number(page ?? 1) | 0);
   const l = Math.max(1, Math.min(50, Number(limit ?? 12) | 0));
   return { skip: (p - 1) * l, take: l, page: p, limit: l };
+}
+
+function toInicioLimit(limit?: number | string) {
+  const n = Number(limit ?? 12);
+  return Math.max(1, Math.min(30, Number.isFinite(n) ? Math.trunc(n) : 12));
+}
+
+function stableHash(value: string) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = Math.imul(31, hash) + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash >>> 0;
+}
+
+function stableShuffle<T extends { id: number }>(items: T[], seed: string) {
+  return [...items].sort(
+    (a, b) =>
+      stableHash(`${seed}:${a.id}`) - stableHash(`${seed}:${b.id}`) ||
+      a.id - b.id,
+  );
 }
 
 const negocioProfileSelect = {
@@ -76,7 +99,9 @@ const negocioProfileSelect = {
   horario: true,
   intervaloReserva: true,
   reservasActivas: true,
+  categoriaId: true,
   categoria: { select: { id: true, nombre: true } },
+  subcategoriaId: true,
   subcategoria: { select: { id: true, nombre: true } },
   duenoId: true,
   dueno: {
@@ -116,6 +141,22 @@ export class NegocioService {
       .then(() =>
         this.logroEngine.registrarAccion({
           usuarioId,
+          accion,
+          refId,
+        }),
+      )
+      .catch(() => undefined);
+  }
+
+  private registrarLogroNegocioEnSegundoPlano(
+    negocioId: number,
+    accion: AccionLogroNegocio,
+    refId?: number,
+  ) {
+    void Promise.resolve()
+      .then(() =>
+        this.logroEngine.registrarAccionNegocio({
+          negocioId,
           accion,
           refId,
         }),
@@ -175,13 +216,19 @@ export class NegocioService {
     }
 
     if (!intervaloReserva || intervaloReserva <= 0) {
-      throw new BadRequestException(
+      throw createFieldError(
+        'INVALID_RESERVATION_INTERVAL',
+        'Si las reservas estan activas, intervaloReserva debe ser positivo',
+        'intervaloReserva',
         'Si las reservas estan activas, intervaloReserva debe ser positivo',
       );
     }
 
     if (!horario || !hasOpenDays(horario)) {
-      throw new BadRequestException(
+      throw createFieldError(
+        'INVALID_SCHEDULE',
+        'Si las reservas estan activas, debe haber al menos un dia abierto',
+        'horario',
         'Si las reservas estan activas, debe haber al menos un dia abierto',
       );
     }
@@ -384,22 +431,30 @@ export class NegocioService {
     return negocio;
   }
 
-  // LIST
-  async list(qry: QueryNegocioDto) {
-    const { q, search, categoriaId, subcategoriaId, page, limit } = qry;
-    const { skip, take, page: p, limit: l } = toPaging(page, limit);
-    const searchTerm = q?.trim() || search?.trim();
+  private buildNegociosPublicWhere(
+    qry: Pick<
+      QueryNegocioDto,
+      'q' | 'search' | 'categoriaId' | 'subcategoriaId'
+    >,
+  ): Prisma.NegocioWhereInput {
+    const searchTerm = qry.q?.trim() || qry.search?.trim();
 
-    const where: any = {
+    return {
       activo: true,
       eliminadoEn: null,
-      ...(categoriaId ? { categoriaId } : {}),
-      ...(subcategoriaId ? { subcategoriaId } : {}),
+      ...(qry.categoriaId ? { categoriaId: qry.categoriaId } : {}),
+      ...(qry.subcategoriaId ? { subcategoriaId: qry.subcategoriaId } : {}),
       ...(searchTerm
         ? {
             OR: [
               {
                 nombre: {
+                  contains: searchTerm,
+                  mode: 'insensitive' as const,
+                },
+              },
+              {
+                descripcionCorta: {
                   contains: searchTerm,
                   mode: 'insensitive' as const,
                 },
@@ -416,10 +471,44 @@ export class NegocioService {
                   mode: 'insensitive' as const,
                 },
               },
+              {
+                ciudad: {
+                  contains: searchTerm,
+                  mode: 'insensitive' as const,
+                },
+              },
+              {
+                categoria: {
+                  nombre: {
+                    contains: searchTerm,
+                    mode: 'insensitive' as const,
+                  },
+                },
+              },
+              {
+                subcategoria: {
+                  nombre: {
+                    contains: searchTerm,
+                    mode: 'insensitive' as const,
+                  },
+                },
+              },
             ],
           }
         : {}),
     };
+  }
+
+  // LIST
+  async list(qry: QueryNegocioDto) {
+    const { q, search, categoriaId, subcategoriaId, page, limit } = qry;
+    const { skip, take, page: p, limit: l } = toPaging(page, limit);
+    const where = this.buildNegociosPublicWhere({
+      q,
+      search,
+      categoriaId,
+      subcategoriaId,
+    });
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.negocio.findMany({
@@ -438,7 +527,9 @@ export class NegocioService {
           horario: true,
           intervaloReserva: true,
           reservasActivas: true,
+          categoriaId: true,
           categoria: { select: { id: true, nombre: true } },
+          subcategoriaId: true,
           subcategoria: { select: { id: true, nombre: true } },
         },
         orderBy: { creadoEn: 'desc' },
@@ -548,6 +639,148 @@ export class NegocioService {
     };
   }
 
+  async listInicio(qry: QueryNegocioDto, actorUserId?: number) {
+    const { q, search, categoriaId, subcategoriaId } = qry;
+    const limit = toInicioLimit(qry.limit);
+    const where = this.buildNegociosPublicWhere({
+      q,
+      search,
+      categoriaId,
+      subcategoriaId,
+    });
+    const seed = [
+      new Date().toISOString().slice(0, 10),
+      actorUserId ?? 'anon',
+      q?.trim() ?? search?.trim() ?? '',
+      categoriaId ?? '',
+      subcategoriaId ?? '',
+    ].join(':');
+
+    const select = {
+      id: true,
+      nombre: true,
+      slug: true,
+      descripcionCorta: true,
+      fotoPerfil: true,
+      nenufarColor: true,
+      nenufarKey: true,
+      nenufarAsset: true,
+      categoriaId: true,
+      categoria: { select: { id: true, nombre: true } },
+      subcategoriaId: true,
+      subcategoria: { select: { id: true, nombre: true } },
+      creadoEn: true,
+    } satisfies Prisma.NegocioSelect;
+
+    let seguidos: Array<Prisma.NegocioGetPayload<{ select: typeof select }>> =
+      [];
+    let seguidosIds: number[] = [];
+    const mapInicioNegocio = (
+      negocio: Prisma.NegocioGetPayload<{ select: typeof select }>,
+      seguidoPorMi: boolean,
+    ) => {
+      const { creadoEn, ...publico } = negocio;
+      void creadoEn;
+      return {
+        ...publico,
+        seguidoPorMi,
+      };
+    };
+
+    if (actorUserId && Number.isInteger(actorUserId) && actorUserId > 0) {
+      const seguimientos = await this.prisma.negocioSeguimiento.findMany({
+        where: {
+          usuarioId: actorUserId,
+          negocio: where,
+        },
+        select: {
+          negocioId: true,
+          negocio: { select },
+        },
+        orderBy: { creadoEn: 'desc' },
+        take: Math.max(limit * 2, 20),
+      });
+
+      seguidos = stableShuffle(
+        seguimientos.map((item) => item.negocio),
+        `${seed}:seguidos`,
+      );
+      seguidosIds = seguimientos.map((item) => item.negocioId);
+    }
+
+    if (seguidos.length === 0) {
+      const candidatos = await this.prisma.negocio.findMany({
+        where,
+        select,
+        orderBy: [{ actualizadoEn: 'desc' }, { id: 'desc' }],
+        take: Math.max(limit * 3, 30),
+      });
+
+      return stableShuffle(candidatos, `${seed}:anon`)
+        .slice(0, limit)
+        .map((negocio) => mapInicioNegocio(negocio, false));
+    }
+
+    const discoveryDeseado =
+      seguidos.length >= 5 ? Math.min(3, Math.max(0, limit - 1)) : 0;
+    const seguidosDeseados =
+      seguidos.length >= 5 ? Math.max(0, limit - discoveryDeseado) : limit;
+
+    const descubrimiento = await this.prisma.negocio.findMany({
+      where: {
+        ...where,
+        id: {
+          notIn: seguidosIds,
+        },
+      },
+      select,
+      orderBy: [{ actualizadoEn: 'desc' }, { id: 'desc' }],
+      take:
+        seguidos.length >= 5
+          ? Math.max(discoveryDeseado * 3, 12)
+          : Math.max((limit - Math.min(seguidos.length, limit)) * 3, 12),
+    });
+
+    let seguidosSeleccionados = seguidos.slice(0, seguidosDeseados);
+    const descubrimientoSeleccionado = stableShuffle(
+      descubrimiento,
+      `${seed}:descubrimiento`,
+    ).slice(
+      0,
+      seguidos.length >= 5
+        ? limit - seguidosSeleccionados.length
+        : limit - seguidosSeleccionados.length,
+    );
+
+    if (
+      seguidos.length >= 5 &&
+      descubrimientoSeleccionado.length < discoveryDeseado
+    ) {
+      seguidosSeleccionados = seguidos.slice(
+        0,
+        limit - descubrimientoSeleccionado.length,
+      );
+    }
+
+    const vistos = new Set<number>();
+    return [
+      ...seguidosSeleccionados.map((negocio) =>
+        mapInicioNegocio(negocio, true),
+      ),
+      ...descubrimientoSeleccionado.map((negocio) =>
+        mapInicioNegocio(negocio, false),
+      ),
+    ]
+      .filter((negocio) => {
+        if (vistos.has(negocio.id)) {
+          return false;
+        }
+        vistos.add(negocio.id);
+        return true;
+      })
+      .slice(0, limit);
+  }
+
   // DETAIL
   async getById(id: number, actorUserId?: number) {
     const n = await this.prisma.negocio.findFirst({
@@ -636,6 +869,9 @@ export class NegocioService {
       nenufarColor: dto.nenufarColor?.trim(),
       fechaFundacion: new Date(dto.fechaFundacion),
       direccion: dto.direccion?.trim(),
+      web: dto.web?.trim(),
+      emailContacto: dto.emailContacto?.trim().toLowerCase(),
+      telefono: dto.telefono?.trim(),
       categoriaId: dto.categoriaId,
       subcategoriaId: dto.subcategoriaId,
       duenoId: currentUserId,
@@ -726,6 +962,13 @@ export class NegocioService {
         : {}),
       ...(dto.direccion !== undefined
         ? { direccion: dto.direccion?.trim() ?? null }
+        : {}),
+      ...(dto.web !== undefined ? { web: dto.web?.trim() ?? null } : {}),
+      ...(dto.emailContacto !== undefined
+        ? { emailContacto: dto.emailContacto?.trim().toLowerCase() ?? null }
+        : {}),
+      ...(dto.telefono !== undefined
+        ? { telefono: dto.telefono?.trim() ?? null }
         : {}),
       ...(dto.fotoPerfil !== undefined
         ? { fotoPerfil: dto.fotoPerfil?.trim() ?? null }
@@ -1093,6 +1336,11 @@ export class NegocioService {
       'HITO_NEGOCIO',
       negocioId,
     );
+    this.registrarLogroNegocioEnSegundoPlano(
+      negocioId,
+      'NEGOCIO_CONSEGUIR_SEGUIDORES',
+      actorUserId,
+    );
 
     return { followed: true, siguiendo: true, total };
   }
@@ -1428,6 +1676,11 @@ export class NegocioService {
         negocioId,
       );
     }
+    this.registrarLogroNegocioEnSegundoPlano(
+      negocioId,
+      'NEGOCIO_RECIBIR_VISITAS',
+      visita.id,
+    );
 
     return {
       ok: true,

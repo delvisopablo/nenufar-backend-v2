@@ -4,6 +4,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -18,19 +19,34 @@ export class RegisterDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
+  @Matches(/^[a-zA-Z0-9._-]+$/)
   @MaxLength(40)
   nickname!: string;
 
   @Transform(({ value }) =>
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
+  @IsNotEmpty()
   @IsEmail()
   email!: string;
 
   @IsString()
-  @MinLength(6)
+  @IsNotEmpty()
+  @MinLength(8)
   @MaxLength(72)
   password!: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(72)
+  confirmPassword?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(72)
+  passwordConfirmation?: string;
 
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsOptional()

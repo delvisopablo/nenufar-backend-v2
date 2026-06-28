@@ -6,6 +6,7 @@ import {
   registerAndLogin,
   resetDatabase,
   seedMinimo,
+  verifyUsuarioEmail,
 } from './helpers';
 
 function extractCookieValue(
@@ -43,7 +44,7 @@ describe('Auth E2E', () => {
     await app.close();
   });
 
-  it('POST /auth/registro crea usuario y devuelve 201', async () => {
+  it('POST /auth/registro crea usuario pendiente de verificación y devuelve 201', async () => {
     const response = await request(app.getHttpServer())
       .post('/auth/registro')
       .send({
@@ -56,10 +57,11 @@ describe('Auth E2E', () => {
 
     expect(response.body).toEqual(
       expect.objectContaining({
-        id: expect.any(Number),
-        nombre: 'Ana',
-        nickname: 'ana_test',
-        email: 'ana@example.com',
+        ok: true,
+        requiresEmailVerification: true,
+        emailVerification: expect.objectContaining({
+          email: expect.any(String),
+        }),
       }),
     );
 
@@ -70,17 +72,45 @@ describe('Auth E2E', () => {
       expect.objectContaining({
         nombre: 'Ana',
         nickname: 'ana_test',
+        emailVerificado: false,
       }),
     );
   });
 
-  it('POST /auth/registro rechaza email duplicado con 409', async () => {
+  it('POST /auth/registro de un email pendiente reenvía el código en vez de fallar', async () => {
     await request(app.getHttpServer()).post('/auth/registro').send({
       nombre: 'Ana',
       nickname: 'ana_test',
       email: 'ana@example.com',
       password: 'secreta123',
     });
+
+    const response = await request(app.getHttpServer())
+      .post('/auth/registro')
+      .send({
+        nombre: 'Ana',
+        nickname: 'ana_test',
+        email: 'ana@example.com',
+        password: 'secreta123',
+      })
+      .expect(201);
+
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        requiresEmailVerification: true,
+      }),
+    );
+  });
+
+  it('POST /auth/registro rechaza email ya verificado con 409', async () => {
+    await request(app.getHttpServer()).post('/auth/registro').send({
+      nombre: 'Ana',
+      nickname: 'ana_test',
+      email: 'ana@example.com',
+      password: 'secreta123',
+    });
+    await verifyUsuarioEmail(app, 'ana@example.com');
 
     const response = await request(app.getHttpServer())
       .post('/auth/registro')
@@ -95,9 +125,12 @@ describe('Auth E2E', () => {
     expect(response.body).toEqual(
       expect.objectContaining({
         ok: false,
+        code: 'EMAIL_ALREADY_IN_USE',
+        message: 'Este correo ya está en uso.',
+        fieldErrors: { email: 'Este correo ya está en uso.' },
         error: expect.objectContaining({
-          code: 'CONFLICT',
-          message: 'Email o nickname ya en uso',
+          code: 'EMAIL_ALREADY_IN_USE',
+          message: 'Este correo ya está en uso.',
           requestId: expect.any(String),
         }),
       }),
@@ -118,9 +151,11 @@ describe('Auth E2E', () => {
     expect(response.body).toEqual(
       expect.objectContaining({
         ok: false,
+        code: 'PASSWORD_TOO_SHORT',
+        message: 'La contraseña debe tener al menos 8 caracteres.',
         error: expect.objectContaining({
-          code: 'VALIDATION_ERROR',
-          message: 'Datos de entrada inválidos',
+          code: 'PASSWORD_TOO_SHORT',
+          message: 'La contraseña debe tener al menos 8 caracteres.',
           requestId: expect.any(String),
           details: expect.objectContaining({
             fields: expect.objectContaining({
@@ -186,19 +221,30 @@ describe('Auth E2E', () => {
 
     expect(response.body).toEqual(
       expect.objectContaining({
-        access_token: expect.any(String),
-        usuario: expect.objectContaining({
-          email: 'pablo-negocio@example.com',
-          rol: 'negocio',
-          negocio: expect.objectContaining({
-            nombre: 'Cafe Nenufar',
-            slug: 'cafe-nenufar',
-            nenufarActivo: 'nenufar-loto-rosa',
-          }),
+        ok: true,
+        requiresEmailVerification: true,
+        emailVerification: expect.objectContaining({
+          email: expect.any(String),
         }),
       }),
     );
-    expect(response.headers['set-cookie']).toEqual(
+
+    // El registro de negocio también exige verificación de email antes de
+    // iniciar sesión (las cookies se establecen en /auth/verificar-email).
+    await verifyUsuarioEmail(app, 'pablo-negocio@example.com');
+
+    const loginResponse = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: 'pablo-negocio@example.com', password: 'secreta123' })
+      .expect(201);
+
+    expect(loginResponse.body).toEqual(
+      expect.objectContaining({
+        access_token: expect.any(String),
+        email: 'pablo-negocio@example.com',
+      }),
+    );
+    expect(loginResponse.headers['set-cookie']).toEqual(
       expect.arrayContaining([expect.stringContaining('access_token=')]),
     );
 
@@ -259,6 +305,7 @@ describe('Auth E2E', () => {
       email: 'ana@example.com',
       password: 'secreta123',
     });
+    await verifyUsuarioEmail(app, 'ana@example.com');
 
     const response = await request(app.getHttpServer())
       .post('/auth/login')
@@ -266,7 +313,7 @@ describe('Auth E2E', () => {
         email: 'ana@example.com',
         password: 'secreta123',
       })
-      .expect(200);
+      .expect(201);
 
     expect(response.body).toEqual(
       expect.objectContaining({
@@ -287,6 +334,7 @@ describe('Auth E2E', () => {
       email: 'ana@example.com',
       password: 'secreta123',
     });
+    await verifyUsuarioEmail(app, 'ana@example.com');
 
     const response = await request(app.getHttpServer())
       .post('/auth/login')
@@ -294,7 +342,7 @@ describe('Auth E2E', () => {
         nickname: 'ana_test',
         password: 'secreta123',
       })
-      .expect(200);
+      .expect(201);
 
     expect(response.body).toEqual(
       expect.objectContaining({
@@ -330,7 +378,7 @@ describe('Auth E2E', () => {
         ok: false,
         error: expect.objectContaining({
           code: 'AUTH_ERROR',
-          message: 'Credenciales inválidas',
+          message: 'Credenciales incorrectas.',
           requestId: expect.any(String),
         }),
       }),
@@ -351,7 +399,7 @@ describe('Auth E2E', () => {
         ok: false,
         error: expect.objectContaining({
           code: 'AUTH_ERROR',
-          message: 'Credenciales inválidas',
+          message: 'Credenciales incorrectas.',
           requestId: expect.any(String),
         }),
       }),
@@ -403,6 +451,7 @@ describe('Auth E2E', () => {
       email: 'ana@example.com',
       password: 'secreta123',
     });
+    await verifyUsuarioEmail(app, 'ana@example.com');
 
     const loginResponse = await request(app.getHttpServer())
       .post('/auth/login')
@@ -410,7 +459,7 @@ describe('Auth E2E', () => {
         email: 'ana@example.com',
         password: 'secreta123',
       })
-      .expect(200);
+      .expect(201);
 
     const accessToken = extractCookieValue(
       loginResponse.headers['set-cookie'] as unknown as string[] | undefined,

@@ -22,6 +22,10 @@ type NestErrorResponse = {
   statusCode?: number;
   message?: string | string[];
   error?: string;
+  code?: string;
+  fieldErrors?: Record<string, string>;
+  fields?: Record<string, string | string[]>;
+  [key: string]: unknown;
 };
 type RequestWithAuthContext = RequestWithContext &
   Request & {
@@ -43,12 +47,86 @@ function messageFromHttpResponse(response: string | NestErrorResponse) {
   return response.message ?? response.error ?? 'Error HTTP';
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeFieldErrorsFromFields(value: unknown) {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const fieldErrors: Record<string, string> = {};
+  for (const [field, messages] of Object.entries(value)) {
+    if (Array.isArray(messages)) {
+      const first = messages.find((message) => typeof message === 'string');
+      if (first) {
+        fieldErrors[field] = first;
+      }
+      continue;
+    }
+
+    if (typeof messages === 'string' && messages) {
+      fieldErrors[field] = messages;
+    }
+  }
+
+  return Object.keys(fieldErrors).length > 0 ? fieldErrors : undefined;
+}
+
+function normalizeFieldErrors(details: Record<string, unknown>) {
+  const explicitFieldErrors = normalizeFieldErrorsFromFields(
+    details.fieldErrors,
+  );
+  if (explicitFieldErrors) {
+    return explicitFieldErrors;
+  }
+
+  return normalizeFieldErrorsFromFields(details.fields);
+}
+
 function detailsFromHttpResponse(response: string | NestErrorResponse) {
-  if (typeof response === 'string' || !Array.isArray(response.message)) {
+  if (typeof response === 'string') {
     return {};
   }
 
-  return { messages: response.message };
+  if (Array.isArray(response.message)) {
+    return { messages: response.message };
+  }
+
+  const {
+    statusCode: _statusCode,
+    message: _message,
+    error: _error,
+    code: _code,
+    ...details
+  } = response;
+
+  return details;
+}
+
+function codeFromHttpResponse(
+  status: number,
+  response: string | NestErrorResponse,
+) {
+  if (typeof response !== 'string' && typeof response.code === 'string') {
+    return response.code;
+  }
+
+  switch (status) {
+    case HttpStatus.BAD_REQUEST:
+      return 'VALIDATION_ERROR';
+    case HttpStatus.UNAUTHORIZED:
+      return 'AUTH_ERROR';
+    case HttpStatus.FORBIDDEN:
+      return 'FORBIDDEN';
+    case HttpStatus.NOT_FOUND:
+      return 'NOT_FOUND';
+    case HttpStatus.CONFLICT:
+      return 'CONFLICT';
+    default:
+      return `HTTP_${status}`;
+  }
 }
 
 function mapHttpException(exception: HttpException): AppError {
@@ -56,6 +134,11 @@ function mapHttpException(exception: HttpException): AppError {
   const response = exception.getResponse() as string | NestErrorResponse;
   const message = messageFromHttpResponse(response);
   const details = detailsFromHttpResponse(response);
+  const code = codeFromHttpResponse(status, response);
+
+  if (typeof response !== 'string' && typeof response.code === 'string') {
+    return new AppError(code, message, status, details);
+  }
 
   switch (status) {
     case HttpStatus.BAD_REQUEST:
@@ -69,7 +152,7 @@ function mapHttpException(exception: HttpException): AppError {
     case HttpStatus.CONFLICT:
       return new ConflictError(message);
     default:
-      return new AppError(`HTTP_${status}`, message, status, details);
+      return new AppError(code, message, status, details);
   }
 }
 
@@ -135,14 +218,21 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       StructuredLogger.warn(requestLine);
     }
 
+    const fieldErrors = normalizeFieldErrors(appError.details);
+    const errorPayload = {
+      code: appError.code,
+      message: appError.message,
+      requestId,
+      details: appError.details,
+      ...(fieldErrors ? { fieldErrors } : {}),
+    };
+
     res.status(appError.statusCode).json({
       ok: false,
-      error: {
-        code: appError.code,
-        message: appError.message,
-        requestId,
-        details: appError.details,
-      },
+      code: appError.code,
+      message: appError.message,
+      ...(fieldErrors ? { fieldErrors } : {}),
+      error: errorPayload,
     });
   }
 }

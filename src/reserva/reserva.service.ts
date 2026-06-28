@@ -19,6 +19,7 @@ import {
 import { QueryNegocioReservasDto } from './dto/query-negocio-reservas.dto';
 import { UpdateReservaEstadoDto } from './dto/update-reserva-estado.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
+import { createFieldError } from '../common/errors/app-error';
 
 type AvailabilitySlot = {
   hora: string;
@@ -42,7 +43,12 @@ function pad2(value: number) {
 
 function parseYMD(value: string, label: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    throw new BadRequestException(`${label} debe ser YYYY-MM-DD`);
+    throw createFieldError(
+      'INVALID_RESERVATION_DATE',
+      `${label} debe ser YYYY-MM-DD`,
+      label,
+      `${label} debe ser YYYY-MM-DD`,
+    );
   }
 
   const [year, month, day] = value.split('-').map(Number);
@@ -53,7 +59,12 @@ function parseYMD(value: string, label: string) {
     date.getMonth() !== month - 1 ||
     date.getDate() !== day
   ) {
-    throw new BadRequestException(`${label} debe ser una fecha válida`);
+    throw createFieldError(
+      'INVALID_RESERVATION_DATE',
+      `${label} debe ser una fecha válida`,
+      label,
+      `${label} debe ser una fecha válida`,
+    );
   }
 
   return date;
@@ -67,6 +78,33 @@ function formatYMD(date: Date) {
 
 function formatHHmm(date: Date) {
   return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
+function invalidReservationDate(message: string) {
+  return createFieldError(
+    'INVALID_RESERVATION_DATE',
+    message,
+    'fecha',
+    message,
+  );
+}
+
+function reservationOutsideSchedule(message: string) {
+  return createFieldError(
+    'RESERVATION_OUTSIDE_SCHEDULE',
+    message,
+    'fecha',
+    message,
+  );
+}
+
+function reservationSlotUnavailable(message = 'Slot no disponible') {
+  return createFieldError(
+    'RESERVATION_SLOT_UNAVAILABLE',
+    message,
+    'fecha',
+    message,
+  );
 }
 
 @Injectable()
@@ -209,16 +247,16 @@ export class ReservaService {
     ignoreReservaId?: number,
   ) {
     if (!fechaISO) {
-      throw new BadRequestException('Fecha requerida');
+      throw invalidReservationDate('Fecha requerida');
     }
 
     const fecha = new Date(fechaISO);
     if (Number.isNaN(fecha.getTime())) {
-      throw new BadRequestException('Fecha inválida');
+      throw invalidReservationDate('Fecha inválida');
     }
 
     if (fecha.getTime() <= Date.now()) {
-      throw new BadRequestException('La reserva debe ser futura');
+      throw invalidReservationDate('La reserva debe ser futura');
     }
 
     const ymd = fecha.toISOString().slice(0, 10);
@@ -239,7 +277,7 @@ export class ReservaService {
     if (!negocio) throw new NotFoundException('Negocio no encontrado');
 
     if (!negocio.reservasActivas) {
-      throw new BadRequestException('El negocio no tiene reservas activas');
+      throw reservationOutsideSchedule('El negocio no tiene reservas activas');
     }
 
     const recurso = await this.ensureRecursoValido(
@@ -248,7 +286,7 @@ export class ReservaService {
     );
 
     if (!negocio.intervaloReserva || negocio.intervaloReserva <= 0) {
-      throw new BadRequestException(
+      throw reservationOutsideSchedule(
         'El negocio no tiene intervalo de reserva configurado',
       );
     }
@@ -258,7 +296,9 @@ export class ReservaService {
       ymd,
     );
     if (rangos === null) {
-      throw new BadRequestException('El negocio no tiene horario configurado');
+      throw reservationOutsideSchedule(
+        'El negocio no tiene horario configurado',
+      );
     }
 
     const targetIso = fecha.toISOString();
@@ -281,7 +321,9 @@ export class ReservaService {
     }
 
     if (!slotValido) {
-      throw new BadRequestException('Slot no disponible');
+      throw reservationOutsideSchedule(
+        'La reserva está fuera del horario disponible',
+      );
     }
 
     const conflict = await this.prisma.reserva.findFirst({
@@ -296,7 +338,7 @@ export class ReservaService {
     });
 
     if (conflict) {
-      throw new BadRequestException('Slot no disponible');
+      throw reservationSlotUnavailable();
     }
 
     return {
@@ -340,7 +382,7 @@ export class ReservaService {
     }
 
     if (!negocio.intervaloReserva || negocio.intervaloReserva <= 0) {
-      throw new BadRequestException(
+      throw reservationOutsideSchedule(
         'El negocio no tiene intervalo de reserva configurado',
       );
     }
@@ -350,7 +392,9 @@ export class ReservaService {
       ymd,
     );
     if (rangos === null) {
-      throw new BadRequestException('El negocio no tiene horario configurado');
+      throw reservationOutsideSchedule(
+        'El negocio no tiene horario configurado',
+      );
     }
 
     const dayStart = new Date(`${ymd}T00:00:00`);
@@ -433,6 +477,14 @@ export class ReservaService {
         .catch(() => undefined);
 
       void this.logroEngine
+        .registrarAccionNegocio({
+          negocioId,
+          accion: 'NEGOCIO_RECIBIR_RESERVAS',
+          refId: reserva.id,
+        })
+        .catch(() => undefined);
+
+      void this.logroEngine
         .registrarAccion({
           usuarioId: slot.duenoId,
           accion: 'HITO_NEGOCIO',
@@ -446,7 +498,7 @@ export class ReservaService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new BadRequestException('Slot no disponible');
+        throw reservationSlotUnavailable();
       }
       throw error;
     }

@@ -1,5 +1,10 @@
 import { Prisma } from '@prisma/client';
-import { AppError, ConflictError, ValidationError } from './app-error';
+import {
+  AppError,
+  ConflictError,
+  ValidationError,
+  createFieldError,
+} from './app-error';
 
 type DatabaseErrorLike = {
   code?: string;
@@ -31,7 +36,8 @@ function safeDetails(error: DatabaseErrorLike) {
     target: error.meta?.target,
     field: error.meta?.field_name,
     prismaCode: error.code?.startsWith('P') ? error.code : undefined,
-    postgresCode: error.code && !error.code.startsWith('P') ? error.code : undefined,
+    postgresCode:
+      error.code && !error.code.startsWith('P') ? error.code : undefined,
   };
 }
 
@@ -41,6 +47,79 @@ function clean(details: Record<string, unknown>) {
   );
 }
 
+function asTargetList(target: unknown) {
+  if (Array.isArray(target)) {
+    return target.map(String);
+  }
+
+  if (typeof target === 'string') {
+    return [target];
+  }
+
+  return [];
+}
+
+function targetIncludes(target: unknown, field: string) {
+  return asTargetList(target).some((item) =>
+    item.toLowerCase().includes(field.toLowerCase()),
+  );
+}
+
+function textIncludes(value: unknown, term: string) {
+  return String(value ?? '')
+    .toLowerCase()
+    .includes(term.toLowerCase());
+}
+
+function mapUniqueConstraint(details: Record<string, unknown>) {
+  const target = details.target;
+  const constraint = details.constraint;
+
+  if (targetIncludes(target, 'email') || textIncludes(constraint, 'email')) {
+    return createFieldError(
+      'EMAIL_ALREADY_IN_USE',
+      'Este correo ya está en uso.',
+      'email',
+      'Este correo ya está en uso.',
+      409,
+      details,
+    );
+  }
+
+  if (
+    targetIncludes(target, 'nickname') ||
+    textIncludes(constraint, 'nickname')
+  ) {
+    return createFieldError(
+      'NICKNAME_ALREADY_IN_USE',
+      'Este nickname ya está en uso.',
+      'nickname',
+      'Este nickname ya está en uso.',
+      409,
+      details,
+    );
+  }
+
+  const isListaNombreTarget =
+    targetIncludes(target, 'usuarioId') && targetIncludes(target, 'nombre');
+  const isListaNombreConstraint =
+    textIncludes(constraint, 'listacompra') &&
+    textIncludes(constraint, 'nombre');
+
+  if (isListaNombreTarget || isListaNombreConstraint) {
+    return createFieldError(
+      'LIST_NAME_ALREADY_EXISTS',
+      'Ya tienes una lista con ese nombre.',
+      'nombre',
+      'Ya tienes una lista con ese nombre.',
+      409,
+      details,
+    );
+  }
+
+  return new ConflictError('Ya existe un registro con esos datos', details);
+}
+
 export function mapDatabaseError(error: unknown): AppError | null {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     const prismaError = error as Prisma.PrismaClientKnownRequestError;
@@ -48,12 +127,17 @@ export function mapDatabaseError(error: unknown): AppError | null {
 
     switch (prismaError.code) {
       case 'P2002':
-        return new ConflictError('Ya existe un registro con esos datos', {
+        return mapUniqueConstraint({
           ...details,
           target: prismaError.meta?.target,
         });
       case 'P2003':
-        return new ConflictError('La relación indicada no existe', details);
+        return new AppError(
+          'RELATED_RECORD_NOT_FOUND',
+          'El negocio, producto o usuario indicado no existe.',
+          400,
+          details,
+        );
       case 'P2011':
         return new ValidationError('Falta un campo obligatorio', details);
       case 'P1001':
@@ -89,7 +173,7 @@ export function mapDatabaseError(error: unknown): AppError | null {
       case 'P2025':
         return new AppError(
           'NOT_FOUND',
-          'Registro no encontrado',
+          'No se ha encontrado el recurso solicitado.',
           404,
           details,
         );
@@ -123,9 +207,14 @@ export function mapDatabaseError(error: unknown): AppError | null {
 
   switch (pgError.code) {
     case '23505':
-      return new ConflictError('Ya existe un registro con esos datos', details);
+      return mapUniqueConstraint(details);
     case '23503':
-      return new ConflictError('La relación indicada no existe', details);
+      return new AppError(
+        'RELATED_RECORD_NOT_FOUND',
+        'El negocio, producto o usuario indicado no existe.',
+        400,
+        details,
+      );
     case '23502':
       return new ValidationError('Falta un campo obligatorio', details);
     case '57014':

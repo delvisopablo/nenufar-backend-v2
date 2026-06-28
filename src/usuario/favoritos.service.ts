@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { ListaCompraService } from '../lista-compra/lista-compra.service';
 
 const productoFavoritoSelect = {
   id: true,
@@ -35,7 +36,10 @@ export type ProductoFavoritoResponse = Prisma.ProductoFavoritoGetPayload<{
 
 @Injectable()
 export class FavoritosService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly listaCompraService: ListaCompraService,
+  ) {}
 
   async getFavoritos(usuarioId: number) {
     const favoritos = await this.prisma.productoFavorito.findMany({
@@ -71,6 +75,12 @@ export class FavoritosService {
         select: productoFavoritoSelect,
       });
 
+      await this.listaCompraService.sincronizarFavorito(
+        usuarioId,
+        productoId,
+        true,
+      );
+
       return favorito;
     } catch (error) {
       if (
@@ -85,6 +95,11 @@ export class FavoritosService {
           },
           select: productoFavoritoSelect,
         });
+        await this.listaCompraService.sincronizarFavorito(
+          usuarioId,
+          productoId,
+          true,
+        );
         return existente;
       }
       throw error;
@@ -95,6 +110,12 @@ export class FavoritosService {
     await this.prisma.productoFavorito.deleteMany({
       where: { usuarioId, productoId },
     });
+
+    await this.listaCompraService.sincronizarFavorito(
+      usuarioId,
+      productoId,
+      false,
+    );
 
     return { ok: true, productoId, favorito: false };
   }
