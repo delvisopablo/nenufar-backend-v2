@@ -17,6 +17,8 @@ import {
   ValidateIf,
 } from 'class-validator';
 
+const STRONG_PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/;
+
 function trimString(value: unknown) {
   return typeof value === 'string' ? value.trim() : value;
 }
@@ -84,7 +86,22 @@ export class RegisterNegocioDto {
   @IsNotEmpty()
   @MinLength(8)
   @MaxLength(72)
+  @Matches(STRONG_PASSWORD_REGEX)
   password!: string;
+
+  @ApiPropertyOptional({ example: 'Nenufar123!' })
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(72)
+  confirmPassword?: string;
+
+  @ApiPropertyOptional({ example: 'Nenufar123!' })
+  @IsOptional()
+  @IsString()
+  @MinLength(8)
+  @MaxLength(72)
+  passwordConfirmation?: string;
 
   @ApiProperty({ example: 'Cafeteria Nenufar' })
   @Transform(({ value }) => trimString(value))

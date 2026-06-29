@@ -1406,6 +1406,21 @@ export class AuthService {
       dto.codigoNenufarizacion,
     )?.toUpperCase();
 
+    const passwordConfirmation = normalizeOptionalString(
+      dto.confirmPassword ?? dto.passwordConfirmation,
+    );
+
+    if (
+      passwordConfirmation !== undefined &&
+      passwordConfirmation !== dto.password
+    ) {
+      throw passwordConfirmationMismatchError(
+        dto.confirmPassword !== undefined
+          ? 'confirmPassword'
+          : 'passwordConfirmation',
+      );
+    }
+
     const fechaFundacion = dto.fechaFundacion
       ? new Date(dto.fechaFundacion)
       : new Date();

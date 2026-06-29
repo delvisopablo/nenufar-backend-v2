@@ -46,9 +46,15 @@ function codeForConstraint(dto: string, property: string, constraint: string) {
 
   if (
     constraint === 'minLength' &&
-    ['password', 'newPassword', 'confirmPassword'].includes(property)
+    ['password', 'newPassword', 'confirmPassword', 'passwordConfirmation'].includes(
+      property,
+    )
   ) {
     return 'PASSWORD_TOO_SHORT';
+  }
+
+  if (constraint === 'matches' && ['password', 'newPassword'].includes(property)) {
+    return 'PASSWORD_TOO_WEAK';
   }
 
   if (dto === 'VerifyEmailDto' && property === 'code') {
@@ -150,9 +156,15 @@ function messageForConstraint(
 
   if (
     constraint === 'minLength' &&
-    ['password', 'newPassword', 'confirmPassword'].includes(property)
+    ['password', 'newPassword', 'confirmPassword', 'passwordConfirmation'].includes(
+      property,
+    )
   ) {
     return 'La contraseña debe tener al menos 8 caracteres.';
+  }
+
+  if (constraint === 'matches' && ['password', 'newPassword'].includes(property)) {
+    return 'La contraseña debe tener al menos 8 caracteres, una mayúscula, una minúscula y un número.';
   }
 
   if (dto === 'VerifyEmailDto' && property === 'code') {

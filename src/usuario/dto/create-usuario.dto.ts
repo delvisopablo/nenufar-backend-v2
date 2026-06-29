@@ -33,6 +33,7 @@ export class CreateUsuarioDto {
   @IsString()
   @IsNotEmpty()
   @MinLength(8)
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/)
   password: string;
 
   @IsOptional()
