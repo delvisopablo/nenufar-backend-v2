@@ -1,0 +1,28 @@
+[
+  {
+    "id": "task-fix-usuario-logro-destacado-migration",
+    "key": "fix-usuario-logro-destacado-migration",
+    "content": "Task completed: Corregir desincronización Prisma/PostgreSQL de UsuarioLogroDestacado aplicando migración real y verificando endpoints de logros (agent: codex)",
+    "namespace": "tasks",
+    "type": "task-outcome",
+    "metadata": {
+      "agent": "codex",
+      "success": true,
+      "quality": 0.97
+    },
+    "createdAt": 1782673582652
+  },
+  {
+    "id": "task-diagnosticar-corregir-logros-nenufar",
+    "key": "diagnosticar-corregir-logros-nenufar",
+    "content": "Task completed: Diagnosticar y corregir sistema de logros backend: respuesta de /me/logros, destacados de usuario, seed/migración de logros de negocio, aliases de endpoint y verificaciones Prisma/build/HTTP. (agent: codex)",
+    "namespace": "tasks",
+    "type": "task-outcome",
+    "metadata": {
+      "agent": "codex",
+      "success": true,
+      "quality": 0.97
+    },
+    "createdAt": 1782675245584
+  }
+]

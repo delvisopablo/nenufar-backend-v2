@@ -118,6 +118,24 @@ export class ResenaService {
     };
   }
 
+  /** Resuelve el post asociado a una reseña (cada reseña publica su propio post). */
+  async getPostIdPorResena(resenaId: number) {
+    const post = await this.prisma.post.findFirst({
+      where: {
+        resenaId,
+        eliminadoEn: null,
+        estado: ContenidoEstado.PUBLICADO,
+      },
+      select: { id: true },
+    });
+
+    if (!post) {
+      throw new NotFoundException('Reseña no encontrada');
+    }
+
+    return post.id;
+  }
+
   async getComentarios(resenaId: number) {
     const post = await this.prisma.post.findFirst({
       where: {

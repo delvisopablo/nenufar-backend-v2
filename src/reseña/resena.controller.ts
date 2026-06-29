@@ -17,10 +17,14 @@ import {
 import { ResenaService } from './resena.service';
 import { CreateResenaDto } from './dto/create-resena.dto';
 import { UpdateResenaDto } from './dto/update-resena.dto';
+import { PostService } from '../post/post.service';
 
 @Controller('resena')
 export class ResenaController {
-  constructor(private readonly resenaService: ResenaService) {}
+  constructor(
+    private readonly resenaService: ResenaService,
+    private readonly postService: PostService,
+  ) {}
 
   private getAuthenticatedUserId(req: { user?: { id?: number } }) {
     const userId = Number(req.user?.id);
@@ -69,6 +73,31 @@ export class ResenaController {
   @Get(':id/comentarios')
   comentarios(@Param('id', ParseIntPipe) id: number) {
     return this.resenaService.getComentarios(id);
+  }
+
+  /**
+   * Alias de compatibilidad: el frontend likea reseñas por su id, pero el
+   * modelo de likes vive en Post. Resolvemos el post de la reseña y
+   * delegamos en el mismo servicio que usan los likes de posts.
+   */
+  @Post(':id/like')
+  async like(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const userId = this.getAuthenticatedUserId(req);
+    const postId = await this.resenaService.getPostIdPorResena(id);
+    return this.postService.like(postId, userId);
+  }
+
+  @Delete(':id/like')
+  async unlike(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const userId = this.getAuthenticatedUserId(req);
+    const postId = await this.resenaService.getPostIdPorResena(id);
+    return this.postService.unlike(postId, userId);
+  }
+
+  @Get(':id/likes')
+  async likes(@Param('id', ParseIntPipe) id: number) {
+    const postId = await this.resenaService.getPostIdPorResena(id);
+    return this.postService.listLikes(postId);
   }
 
   /** Crear reseña (+ post + pétalos) */

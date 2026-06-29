@@ -5,9 +5,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ResenasAliasController } from './resenas-alias.controller';
 import { LogroModule } from '../logro/logro.module';
 import { NotificacionModule } from '../notificacion/notificacion.module';
+import { PostModule } from '../post/post.module';
 
 @Module({
-  imports: [NotificacionModule, LogroModule],
+  imports: [NotificacionModule, LogroModule, PostModule],
   controllers: [ResenaController, ResenasAliasController],
   providers: [ResenaService, PrismaService],
   exports: [ResenaService],
