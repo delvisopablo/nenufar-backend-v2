@@ -223,12 +223,8 @@ export class ReservaController {
 
   @UseGuards(JwtAuthGuard)
   @Get('me/reservas')
-  mias(
-    @Req() req: any,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
-  ) {
+  mias(@Req() req: any) {
     const userId = this.getAuthenticatedUserId(req);
-    return this.service.misReservas(userId, page, limit);
+    return this.service.misReservasPerfil(userId);
   }
 }

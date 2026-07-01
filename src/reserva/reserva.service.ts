@@ -42,6 +42,24 @@ type AvailabilityDetail = {
   slots: AvailabilitySlot[];
 };
 
+type ReservaPerfilRecord = Prisma.ReservaGetPayload<{
+  select: {
+    id: true;
+    estado: true;
+    fecha: true;
+    nota: true;
+    numPersonas: true;
+    motivoCancelacion: true;
+    negocio: {
+      select: {
+        id: true;
+        nombre: true;
+        fotoPerfil: true;
+      };
+    };
+  };
+}>;
+
 function pad2(value: number) {
   return value.toString().padStart(2, '0');
 }
@@ -247,11 +265,31 @@ export class ReservaService {
       where: { id },
       data,
       include: {
-        negocio: { select: { id: true, nombre: true, slug: true } },
+        negocio: {
+          select: { id: true, nombre: true, slug: true, fotoPerfil: true },
+        },
         usuario: { select: { id: true, nombre: true, nickname: true } },
         recurso: { select: { id: true, nombre: true, capacidad: true } },
       },
     });
+  }
+
+  private toReservaPerfilItem(item: ReservaPerfilRecord) {
+    return {
+      id: item.id,
+      estado: item.estado,
+      fecha: formatYMD(item.fecha),
+      hora: formatHHmm(item.fecha),
+      personas: item.numPersonas ?? null,
+      mensaje: item.nota ?? null,
+      motivoCancelacion: item.motivoCancelacion ?? null,
+      puedeCancelar: puedeCancelarReserva(item.estado, item.fecha),
+      negocio: {
+        id: item.negocio.id,
+        nombre: item.negocio.nombre,
+        fotoPerfil: item.negocio.fotoPerfil ?? null,
+      },
+    };
   }
 
   private async assertSlotDisponible(
@@ -522,7 +560,9 @@ export class ReservaService {
     const reserva = await this.prisma.reserva.findUnique({
       where: { id },
       include: {
-        negocio: { select: { id: true, nombre: true, slug: true } },
+        negocio: {
+          select: { id: true, nombre: true, slug: true, fotoPerfil: true },
+        },
         usuario: { select: { id: true, nombre: true, nickname: true } },
         recurso: { select: { id: true, nombre: true, capacidad: true } },
       },
@@ -914,5 +954,25 @@ export class ReservaService {
       page: p,
       limit: l,
     };
+  }
+
+  async misReservasPerfil(userId: number) {
+    const items = await this.prisma.reserva.findMany({
+      where: { usuarioId: userId },
+      select: {
+        id: true,
+        estado: true,
+        fecha: true,
+        nota: true,
+        numPersonas: true,
+        motivoCancelacion: true,
+        negocio: {
+          select: { id: true, nombre: true, fotoPerfil: true },
+        },
+      },
+      orderBy: [{ fecha: 'asc' }, { id: 'asc' }],
+    });
+
+    return items.map((item) => this.toReservaPerfilItem(item));
   }
 }
