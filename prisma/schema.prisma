@@ -189,6 +189,9 @@ model Usuario {
   codigoVerificacionEmailExpiraEn      DateTime?
   codigoVerificacionEmailIntentos      Int          @default(0)
   codigoVerificacionEmailUltimoEnvioEn DateTime?
+  passwordResetTokenHash               String?
+  passwordResetExpiresAt               DateTime?
+  passwordResetUsedAt                  DateTime?
   ultimoLoginEn                        DateTime?
   welcomeEmailSentAt                   DateTime?
   estadoCuenta                         EstadoCuenta @default(ACTIVA)
@@ -229,6 +232,7 @@ model Usuario {
   @@index([rolGlobal])
   @@index([creadoEn])
   @@index([codigoReferido])
+  @@index([passwordResetTokenHash])
 }
 
 model Categoria {

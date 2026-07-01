@@ -3,6 +3,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -19,6 +20,10 @@ export class ResetPasswordDto {
   @IsNotEmpty()
   @MinLength(8)
   @MaxLength(72)
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/, {
+    message:
+      'newPassword debe tener al menos una mayúscula, una minúscula y un número',
+  })
   newPassword!: string;
 
   @IsOptional()

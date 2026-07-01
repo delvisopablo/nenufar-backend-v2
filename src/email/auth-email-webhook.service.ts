@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-type AuthEmailEventType = 'welcome' | 'confirmation_code' | 'business_welcome';
+type AuthEmailEventType =
+  | 'welcome'
+  | 'confirmation_code'
+  | 'business_welcome'
+  | 'password_reset';
 
 export type WelcomeAuthEmailPayload = {
   eventType: 'welcome';
@@ -30,10 +34,18 @@ export type ConfirmationCodeAuthEmailPayload = {
   supportEmail?: string;
 };
 
+export type PasswordResetAuthEmailPayload = {
+  eventType: 'password_reset';
+  email: string;
+  name: string;
+  resetUrl: string;
+};
+
 type AuthEmailPayload =
   | WelcomeAuthEmailPayload
   | BusinessWelcomeAuthEmailPayload
-  | ConfirmationCodeAuthEmailPayload;
+  | ConfirmationCodeAuthEmailPayload
+  | PasswordResetAuthEmailPayload;
 
 type SendOptions = {
   required?: boolean;
@@ -101,6 +113,31 @@ export class AuthEmailWebhookService {
       loginUrl: this.getLoginUrl(),
       ...this.getSupportEmailPayload(),
     };
+  }
+
+  buildPasswordResetPayload(input: {
+    email: string;
+    name?: string | null;
+    resetUrl: string;
+  }): PasswordResetAuthEmailPayload {
+    return {
+      eventType: 'password_reset',
+      email: input.email,
+      name: this.normalizeName(input.name),
+      resetUrl: input.resetUrl,
+    };
+  }
+
+  async sendPasswordResetEmail(
+    email: string,
+    name: string | null | undefined,
+    resetUrl: string,
+    options: SendOptions = {},
+  ) {
+    return this.postAuthEmailEvent(
+      this.buildPasswordResetPayload({ email, name, resetUrl }),
+      options,
+    );
   }
 
   async sendWelcomeEmail(

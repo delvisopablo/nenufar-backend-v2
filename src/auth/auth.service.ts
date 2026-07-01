@@ -37,7 +37,7 @@ import {
 } from '../negocio/horario.util';
 import { NenufarizarService } from '../nenufarizar/nenufarizar.service';
 import { AppError, createFieldError } from '../common/errors/app-error';
-import { createHash, randomInt, timingSafeEqual } from 'crypto';
+import { createHash, randomBytes, randomInt, timingSafeEqual } from 'crypto';
 
 // Cambiar a true para hacer obligatorio el código de nenufarización en el registro de negocio
 const CODIGO_NENUFARIZACION_REQUERIDO = false;
@@ -46,6 +46,9 @@ const EMAIL_VERIFICATION_CODE_TTL_MS =
   EMAIL_VERIFICATION_CODE_TTL_MINUTES * 60 * 1000;
 const EMAIL_VERIFICATION_RESEND_COOLDOWN_MS = 60 * 1000;
 const EMAIL_VERIFICATION_MAX_ATTEMPTS = 5;
+const PASSWORD_RESET_TOKEN_TTL_MINUTES = 30;
+const PASSWORD_RESET_TOKEN_TTL_MS =
+  PASSWORD_RESET_TOKEN_TTL_MINUTES * 60 * 1000;
 
 type AuthenticatedRequest = Request & {
   user?: {
@@ -611,30 +614,6 @@ export class AuthService {
     );
   }
 
-  private async signOneTimeToken(
-    type: OneTimeTokenType,
-    user: { id: number; email: string; nickname?: string },
-  ) {
-    const secret = this.getOneTimeTokenSecret(type);
-    const expiresIn =
-      type === 'verify-email'
-        ? (process.env.JWT_VERIFY_EMAIL_TTL ?? '7d')
-        : (process.env.JWT_RESET_PASSWORD_TTL ?? '1h');
-
-    return this.jwt.signAsync(
-      {
-        sub: user.id,
-        email: user.email,
-        nickname: user.nickname,
-        type,
-      },
-      {
-        secret,
-        expiresIn,
-      },
-    );
-  }
-
   private async verifyOneTimeToken(
     token: string,
     expectedType: OneTimeTokenType,
@@ -977,6 +956,20 @@ export class AuthService {
       candidateBuffer.length === storedBuffer.length &&
       timingSafeEqual(candidateBuffer, storedBuffer)
     );
+  }
+
+  private generatePasswordResetToken(): string {
+    return randomBytes(32).toString('hex');
+  }
+
+  private hashPasswordResetToken(token: string): string {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private getFrontendUrl(): string {
+    return (
+      process.env.FRONTEND_URL?.trim() || 'https://minenufar.com'
+    ).replace(/\/+$/, '');
   }
 
   private getVerificationCodeLogSuffix(code: string): string {
@@ -2026,25 +2019,63 @@ export class AuthService {
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {
+    const genericResponse = {
+      ok: true,
+      message:
+        'Si existe una cuenta con ese correo, recibirás instrucciones para cambiar la contraseña.',
+    };
+
     const user = await this.prisma.usuario.findUnique({
       where: { email: dto.email },
-      select: { id: true, email: true, nickname: true },
+      select: { id: true, email: true, nombre: true, nickname: true },
     });
 
     if (!user) {
-      return { ok: true };
+      this.logger.log(
+        `Solicitud de recuperación de contraseña para email no registrado=${this.maskEmail(dto.email)}`,
+      );
+      return genericResponse;
     }
 
-    const resetToken = await this.signOneTimeToken('reset-password', {
-      id: user.id,
-      email: user.email,
-      nickname: user.nickname,
+    const token = this.generatePasswordResetToken();
+    const tokenHash = this.hashPasswordResetToken(token);
+    const expiresAt = new Date(Date.now() + PASSWORD_RESET_TOKEN_TTL_MS);
+
+    await this.prisma.usuario.update({
+      where: { id: user.id },
+      data: {
+        passwordResetTokenHash: tokenHash,
+        passwordResetExpiresAt: expiresAt,
+        passwordResetUsedAt: null,
+      },
     });
 
-    return {
-      ok: true,
-      resetToken,
-    };
+    this.logger.log(
+      `Token de recuperación de contraseña generado usuario=${user.id} email=${this.maskEmail(user.email)} expiraEn=${expiresAt.toISOString()}`,
+    );
+
+    const resetUrl = `${this.getFrontendUrl()}/restablecer-password?token=${token}`;
+
+    try {
+      const sent = await this.authEmailWebhookService.sendPasswordResetEmail(
+        user.email,
+        this.getWelcomeDisplayName(user),
+        resetUrl,
+      );
+
+      if (!sent) {
+        this.logger.warn(
+          `No se pudo notificar email de recuperación de contraseña por n8n para usuario ${user.id} email=${this.maskEmail(user.email)}. El flujo continúa.`,
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Fallo enviando email de recuperación de contraseña por n8n para usuario ${user.id} email=${this.maskEmail(user.email)}. El flujo continúa.`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
+
+    return genericResponse;
   }
 
   async resetPassword(dto: ResetPasswordDto) {
@@ -2063,14 +2094,69 @@ export class AuthService {
       );
     }
 
-    const payload = await this.verifyOneTimeToken(dto.token, 'reset-password');
-    const hash = await bcrypt.hash(dto.newPassword, 10);
+    const tokenHash = this.hashPasswordResetToken(dto.token);
+    const invalidTokenError = new AppError(
+      'RESET_TOKEN_INVALID',
+      'El enlace no es válido o ya ha caducado.',
+      401,
+    );
 
-    await this.prisma.usuario.update({
-      where: { id: payload.sub },
-      data: { password: hash },
+    const existing = await this.prisma.usuario.findFirst({
+      where: { passwordResetTokenHash: tokenHash },
+      select: {
+        id: true,
+        passwordResetExpiresAt: true,
+        passwordResetUsedAt: true,
+      },
     });
 
-    return { ok: true };
+    if (!existing || existing.passwordResetUsedAt) {
+      this.logger.warn(
+        'Intento de restablecer contraseña con token inválido o ya utilizado',
+      );
+      throw invalidTokenError;
+    }
+
+    if (
+      !existing.passwordResetExpiresAt ||
+      existing.passwordResetExpiresAt.getTime() < Date.now()
+    ) {
+      this.logger.warn(
+        `Intento de restablecer contraseña con token caducado usuario=${existing.id}`,
+      );
+      throw new AppError('RESET_TOKEN_EXPIRED', 'El enlace ha caducado.', 401);
+    }
+
+    const hash = await bcrypt.hash(dto.newPassword, 10);
+    const usedAt = new Date();
+
+    // Update condicionado al hash+no-usado todavía vigente: evita que dos
+    // peticiones concurrentes con el mismo token consuman el reset dos veces.
+    const { count } = await this.prisma.usuario.updateMany({
+      where: {
+        id: existing.id,
+        passwordResetTokenHash: tokenHash,
+        passwordResetUsedAt: null,
+      },
+      data: {
+        password: hash,
+        passwordResetTokenHash: null,
+        passwordResetExpiresAt: null,
+        passwordResetUsedAt: usedAt,
+      },
+    });
+
+    if (count === 0) {
+      this.logger.warn(
+        `Intento de restablecer contraseña con token ya consumido en paralelo usuario=${existing.id}`,
+      );
+      throw invalidTokenError;
+    }
+
+    this.logger.log(
+      `Contraseña restablecida correctamente usuario=${existing.id}`,
+    );
+
+    return { ok: true, message: 'Contraseña actualizada correctamente.' };
   }
 }
