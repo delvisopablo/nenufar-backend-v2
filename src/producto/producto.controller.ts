@@ -1,7 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import {
-  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -14,6 +13,7 @@ import {
   Req,
   UnauthorizedException,
   UploadedFile,
+  UseFilters,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -31,21 +31,16 @@ import {
   CreateSolicitudProductoDto,
 } from './dto/create-solicitud-producto.dto';
 import { RechazarSolicitudProductoDto } from './dto/rechazar-solicitud-producto.dto';
+import {
+  UploadedImageLike,
+  assertValidImageUpload,
+  imageFileFilter,
+} from '../common/uploads/image-upload.util';
+import { createImageTooLargeFilter } from '../common/uploads/image-too-large.filter';
 
 const MAX_PRODUCT_PHOTO_SIZE = 5 * 1024 * 1024;
-const productPhotoExtensions: Record<string, string> = {
-  'image/jpeg': 'jpg',
-  'image/jpg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-};
-
-type UploadedProductPhoto = {
-  buffer?: Buffer;
-  mimetype?: string;
-  originalname?: string;
-  size?: number;
-};
+const PRODUCT_PHOTO_TOO_LARGE_MESSAGE =
+  'La foto del producto no puede superar 5 MB.';
 
 @Controller()
 export class ProductoController {
@@ -93,30 +88,19 @@ export class ProductoController {
   }
 
   @Post('negocios/:negocioId/productos/:productoId/foto')
+  @UseFilters(
+    createImageTooLargeFilter('foto', PRODUCT_PHOTO_TOO_LARGE_MESSAGE),
+  )
   @UseInterceptors(
     FileInterceptor('foto', {
       limits: { fileSize: MAX_PRODUCT_PHOTO_SIZE },
-      fileFilter: (_req, file: UploadedProductPhoto, callback) => {
-        const mimeType = String(file.mimetype ?? '');
-
-        if (!productPhotoExtensions[mimeType]) {
-          callback(
-            new BadRequestException(
-              'La foto del producto debe ser JPG, PNG o WEBP',
-            ),
-            false,
-          );
-          return;
-        }
-
-        callback(null, true);
-      },
+      fileFilter: imageFileFilter('foto'),
     }),
   )
   async subirFoto(
     @Param('negocioId', ParseIntPipe) negocioId: number,
     @Param('productoId', ParseIntPipe) productoId: number,
-    @UploadedFile() file: UploadedProductPhoto | undefined,
+    @UploadedFile() file: UploadedImageLike | undefined,
     @Req() req: any,
   ) {
     const currentUserId = this.getAuthenticatedUserId(req);
@@ -124,7 +108,6 @@ export class ProductoController {
     const relativePath = await this.persistProductPhoto(productoId, file);
     const fotoUrl = this.buildPublicUploadUrl(req, relativePath);
 
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call
     return this.service.actualizarFoto(
       negocioId,
       productoId,
@@ -261,32 +244,20 @@ export class ProductoController {
 
   private async persistProductPhoto(
     productoId: number,
-    file: UploadedProductPhoto | undefined,
+    file: UploadedImageLike | undefined,
   ) {
-    if (!file?.buffer?.length) {
-      throw new BadRequestException('Selecciona una foto de producto');
-    }
-
-    if (Number(file.size ?? 0) > MAX_PRODUCT_PHOTO_SIZE) {
-      throw new BadRequestException(
-        'La foto del producto no puede superar 5 MB',
-      );
-    }
-
-    const mimeType = String(file.mimetype ?? '');
-    const extension = productPhotoExtensions[mimeType];
-
-    if (!extension) {
-      throw new BadRequestException(
-        'La foto del producto debe ser JPG, PNG o WEBP',
-      );
-    }
+    const extension = assertValidImageUpload(file, {
+      field: 'foto',
+      maxSize: MAX_PRODUCT_PHOTO_SIZE,
+      missingMessage: 'Selecciona una foto de producto.',
+      tooLargeMessage: PRODUCT_PHOTO_TOO_LARGE_MESSAGE,
+    });
 
     const uploadDir = join(process.cwd(), 'uploads', 'productos', 'foto');
     await mkdir(uploadDir, { recursive: true });
 
     const filename = `producto-${productoId}-${randomUUID()}.${extension}`;
-    await writeFile(join(uploadDir, filename), file.buffer);
+    await writeFile(join(uploadDir, filename), file!.buffer!);
 
     return `uploads/productos/foto/${filename}`;
   }

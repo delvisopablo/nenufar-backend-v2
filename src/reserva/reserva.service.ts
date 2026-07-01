@@ -5,7 +5,12 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-import { Prisma, ReservaEstado, RolGlobal } from '@prisma/client';
+import {
+  Prisma,
+  ReservaCanceladaPor,
+  ReservaEstado,
+  RolGlobal,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LogroEngineService } from '../logro/logro-engine.service';
 import {
@@ -105,6 +110,15 @@ function reservationSlotUnavailable(message = 'Slot no disponible') {
     'fecha',
     message,
   );
+}
+
+const CANCELABLE_ESTADOS: ReservaEstado[] = [
+  ReservaEstado.PENDIENTE,
+  ReservaEstado.CONFIRMADA,
+];
+
+function puedeCancelarReserva(estado: ReservaEstado, fecha: Date) {
+  return CANCELABLE_ESTADOS.includes(estado) && fecha.getTime() > Date.now();
 }
 
 @Injectable()
@@ -549,7 +563,13 @@ export class ReservaService {
         include: {
           negocio: { select: { id: true, nombre: true, slug: true } },
           usuario: {
-            select: { id: true, nombre: true, nickname: true, email: true },
+            select: {
+              id: true,
+              nombre: true,
+              nickname: true,
+              email: true,
+              foto: true,
+            },
           },
           recurso: { select: { id: true, nombre: true, capacidad: true } },
         },
@@ -802,8 +822,9 @@ export class ReservaService {
 
     const canManage =
       isAdmin || (await this.canEditNegocioReservas(reserva.negocioId, userId));
+    const isOwner = reserva.usuarioId === userId;
 
-    if (!canManage && reserva.usuarioId !== userId) {
+    if (!canManage && !isOwner) {
       throw new ForbiddenException('No puedes cancelar esta reserva');
     }
 
@@ -811,6 +832,51 @@ export class ReservaService {
       estado: ReservaEstado.CANCELADA,
       canceladaEn: new Date(),
       motivoCancelacion: motivoCancelacion?.trim() || null,
+      canceladaPor: isOwner
+        ? ReservaCanceladaPor.USUARIO
+        : ReservaCanceladaPor.NEGOCIO,
+    });
+  }
+
+  async cancelarPorUsuario(id: number, userId: number, motivo: string) {
+    const reserva = await this.prisma.reserva.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        usuarioId: true,
+        estado: true,
+        fecha: true,
+      },
+    });
+    if (!reserva) throw new NotFoundException('Reserva no encontrada');
+
+    if (reserva.usuarioId !== userId) {
+      throw new ForbiddenException('No puedes cancelar una reserva ajena');
+    }
+
+    if (reserva.estado === ReservaEstado.CANCELADA) {
+      throw new BadRequestException('La reserva ya está cancelada');
+    }
+
+    const motivoTrim = motivo?.trim();
+    if (!motivoTrim) {
+      throw createFieldError(
+        'RESERVATION_CANCEL_REASON_REQUIRED',
+        'El motivo de cancelación es obligatorio',
+        'motivo',
+        'El motivo de cancelación es obligatorio',
+      );
+    }
+
+    if (reserva.fecha.getTime() <= Date.now()) {
+      throw new BadRequestException('No se puede cancelar una reserva pasada');
+    }
+
+    return this.updateReservaRecord(id, {
+      estado: ReservaEstado.CANCELADA,
+      canceladaEn: new Date(),
+      motivoCancelacion: motivoTrim,
+      canceladaPor: ReservaCanceladaPor.USUARIO,
     });
   }
 
@@ -827,7 +893,9 @@ export class ReservaService {
       this.prisma.reserva.findMany({
         where: { usuarioId: userId },
         include: {
-          negocio: { select: { id: true, nombre: true, slug: true } },
+          negocio: {
+            select: { id: true, nombre: true, slug: true, fotoPerfil: true },
+          },
           recurso: { select: { id: true, nombre: true, capacidad: true } },
         },
         orderBy: { fecha: 'asc' },
@@ -837,6 +905,14 @@ export class ReservaService {
       this.prisma.reserva.count({ where: { usuarioId: userId } }),
     ]);
 
-    return { items, total, page: p, limit: l };
+    return {
+      items: items.map((item) => ({
+        ...item,
+        puedeCancelar: puedeCancelarReserva(item.estado, item.fecha),
+      })),
+      total,
+      page: p,
+      limit: l,
+    };
   }
 }

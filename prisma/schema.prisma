@@ -12,7 +12,13 @@ datasource db {
 enum PedidoEstado {
   PENDIENTE
   COMPLETADO
+  ENTREGADO
   CANCELADO
+}
+
+enum PedidoCanceladoPor {
+  USUARIO
+  NEGOCIO
 }
 
 enum CompraEstado {
@@ -109,6 +115,11 @@ enum ReservaEstado {
   CANCELADA
   COMPLETADA
   NO_SHOW
+}
+
+enum ReservaCanceladaPor {
+  USUARIO
+  NEGOCIO
 }
 
 enum EstadoCuenta {
@@ -651,6 +662,10 @@ model Pedido {
   creadoEn      DateTime     @default(now())
   actualizadoEn DateTime     @updatedAt
 
+  motivoCancelacion String?
+  canceladoEn       DateTime?
+  canceladoPor      PedidoCanceladoPor?
+
   /// Lista de Mi Nenulista desde la que se cerró este pedido (si aplica).
   /// La lista puede seguir editándose después: este pedido no debe verse afectado,
   /// por eso se conserva `listaCompraSnapshot` con el estado exacto al cerrar.
@@ -759,6 +774,7 @@ model Reserva {
   numPersonas       Int?
   canceladaEn       DateTime?
   motivoCancelacion String?
+  canceladaPor      ReservaCanceladaPor?
   creadoEn          DateTime      @default(now())
   actualizadoEn     DateTime      @updatedAt
 

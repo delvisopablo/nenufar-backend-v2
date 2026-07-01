@@ -9,6 +9,7 @@ import {
   CanalVenta,
   CompraEstado,
   PagoEstado,
+  PedidoCanceladoPor,
   PedidoEstado,
   Prisma,
   RolGlobal,
@@ -23,6 +24,12 @@ import { UpdateItemDto } from './dto/update-item.dto';
 import { UpdatePagoEstadoDto } from './dto/update-pago-estado.dto';
 import { UpdatePedidoDto } from './dto/update-pedido.dto';
 import { AccionLogroNegocio } from '../logro/logro-accion';
+
+const PEDIDO_ESTADOS_TERMINALES: PedidoEstado[] = [
+  PedidoEstado.COMPLETADO,
+  PedidoEstado.ENTREGADO,
+  PedidoEstado.CANCELADO,
+];
 
 function toPaging(page?: number | string, limit?: number | string) {
   const p = Math.max(1, Number(page ?? 1) | 0);
@@ -96,7 +103,24 @@ export class PedidoService {
       return negocio;
     }
 
-    throw new ForbiddenException('No tienes permisos para gestionar este negocio');
+    throw new ForbiddenException(
+      'No tienes permisos para gestionar este negocio',
+    );
+  }
+
+  private async canManageNegocio(negocioId: number, actorUserId: number) {
+    try {
+      await this.assertCanManageNegocio(negocioId, actorUserId);
+      return true;
+    } catch (error) {
+      if (
+        error instanceof ForbiddenException ||
+        error instanceof UnauthorizedException
+      ) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   private async syncPedidoTotal(
@@ -140,10 +164,7 @@ export class PedidoService {
 
     const totalPagado = compra.pagos
       .filter((p) => p.estado === PagoEstado.PAGADO)
-      .reduce(
-        (sum, pago) => sum.plus(pago.cantidad),
-        new Prisma.Decimal(0),
-      );
+      .reduce((sum, pago) => sum.plus(pago.cantidad), new Prisma.Decimal(0));
 
     let estado: CompraEstado = CompraEstado.PENDIENTE;
     if (totalPagado.greaterThanOrEqualTo(compra.total)) {
@@ -217,6 +238,7 @@ export class PedidoService {
               nombre: true,
               nickname: true,
               email: true,
+              foto: true,
             },
           },
           pedidoProductos: {
@@ -262,7 +284,7 @@ export class PedidoService {
     return { items, total, page, limit };
   }
 
-  async getPedido(id: number) {
+  private async getPedidoRaw(id: number) {
     const pedido = await this.prisma.pedido.findUnique({
       where: { id },
       include: {
@@ -286,20 +308,49 @@ export class PedidoService {
     return pedido;
   }
 
-  async updatePedido(id: number, dto: UpdatePedidoDto) {
+  /** Detalle de pedido. Solo lo puede ver el usuario dueño o quien gestiona el negocio. */
+  async getPedido(id: number, actorUserId: number) {
+    const pedido = await this.getPedidoRaw(id);
+
+    const isOwner = pedido.usuarioId === actorUserId;
+    const canManage =
+      isOwner || (await this.canManageNegocio(pedido.negocioId, actorUserId));
+
+    if (!canManage) {
+      throw new ForbiddenException('No tienes permisos para ver este pedido');
+    }
+
+    return pedido;
+  }
+
+  async updatePedido(id: number, actorUserId: number, dto: UpdatePedidoDto) {
     const pedido = await this.prisma.pedido.findUnique({
       where: { id },
       select: { id: true, negocioId: true, estado: true },
     });
     if (!pedido) throw new NotFoundException('Pedido no encontrado');
 
+    await this.assertCanManageNegocio(pedido.negocioId, actorUserId);
+
+    if (dto.estado === PedidoEstado.CANCELADO) {
+      return this.cancelarPedido(id, actorUserId, dto.motivo);
+    }
+
+    if (
+      (dto.estado === PedidoEstado.COMPLETADO ||
+        dto.estado === PedidoEstado.ENTREGADO) &&
+      pedido.estado === PedidoEstado.CANCELADO
+    ) {
+      throw new BadRequestException(
+        `No se puede marcar como ${dto.estado} un pedido cancelado`,
+      );
+    }
+
     const actualizado = await this.prisma.pedido.update({
       where: { id },
       data: {
         ...(dto.estado !== undefined ? { estado: dto.estado } : {}),
-        ...(dto.canalVenta !== undefined
-          ? { canalVenta: dto.canalVenta }
-          : {}),
+        ...(dto.canalVenta !== undefined ? { canalVenta: dto.canalVenta } : {}),
       },
       include: {
         usuario: { select: { id: true, nombre: true, nickname: true } },
@@ -321,11 +372,12 @@ export class PedidoService {
     return actualizado;
   }
 
-  /** Cambia el estado de un pedido. Solo dueño/miembro del negocio o admin. */
+  /** Cambia el estado de un pedido (completar/entregar/cancelar). Solo dueño/miembro del negocio o admin. */
   async actualizarEstadoPedido(
     pedidoId: number,
     actorUserId: number,
     estado: PedidoEstado,
+    motivo?: string,
   ) {
     const pedido = await this.prisma.pedido.findUnique({
       where: { id: pedidoId },
@@ -334,6 +386,20 @@ export class PedidoService {
     if (!pedido) throw new NotFoundException('Pedido no encontrado');
 
     await this.assertCanManageNegocio(pedido.negocioId, actorUserId);
+
+    if (estado === PedidoEstado.CANCELADO) {
+      return this.cancelarPedido(pedidoId, actorUserId, motivo);
+    }
+
+    if (
+      (estado === PedidoEstado.COMPLETADO ||
+        estado === PedidoEstado.ENTREGADO) &&
+      pedido.estado === PedidoEstado.CANCELADO
+    ) {
+      throw new BadRequestException(
+        `No se puede marcar como ${estado} un pedido cancelado`,
+      );
+    }
 
     const actualizado = await this.prisma.pedido.update({
       where: { id: pedidoId },
@@ -356,6 +422,111 @@ export class PedidoService {
     }
 
     return actualizado;
+  }
+
+  /**
+   * Cancela un pedido. Lo puede cancelar el usuario que lo creó (Nenulista/historial)
+   * o quien gestiona el negocio. No se borra físicamente: se marca CANCELADO para
+   * mantener el histórico.
+   */
+  async cancelarPedido(pedidoId: number, actorUserId: number, motivo?: string) {
+    const pedido = await this.prisma.pedido.findUnique({
+      where: { id: pedidoId },
+      select: { id: true, negocioId: true, usuarioId: true, estado: true },
+    });
+    if (!pedido) throw new NotFoundException('Pedido no encontrado');
+
+    const isOwner = pedido.usuarioId === actorUserId;
+    const canManage =
+      isOwner || (await this.canManageNegocio(pedido.negocioId, actorUserId));
+
+    if (!canManage) {
+      throw new ForbiddenException('No puedes cancelar este pedido');
+    }
+
+    if (pedido.estado === PedidoEstado.CANCELADO) {
+      throw new BadRequestException('El pedido ya está cancelado');
+    }
+
+    if (PEDIDO_ESTADOS_TERMINALES.includes(pedido.estado)) {
+      throw new BadRequestException(
+        'No se puede cancelar un pedido ya completado o entregado',
+      );
+    }
+
+    return this.prisma.pedido.update({
+      where: { id: pedidoId },
+      data: {
+        estado: PedidoEstado.CANCELADO,
+        canceladoEn: new Date(),
+        motivoCancelacion: motivo?.trim() || null,
+        canceladoPor: isOwner
+          ? PedidoCanceladoPor.USUARIO
+          : PedidoCanceladoPor.NEGOCIO,
+      },
+      include: {
+        usuario: { select: { id: true, nombre: true, nickname: true } },
+        negocio: { select: { id: true, nombre: true } },
+      },
+    });
+  }
+
+  /** Pedidos del usuario autenticado (para Nenulista/historial). */
+  async misPedidos(
+    userId: number,
+    page?: number | string,
+    limit?: number | string,
+  ) {
+    const { skip, take, page: p, limit: l } = toPaging(page, limit);
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.pedido.findMany({
+        where: { usuarioId: userId },
+        include: {
+          negocio: {
+            select: { id: true, nombre: true, slug: true, fotoPerfil: true },
+          },
+          pedidoProductos: {
+            select: {
+              id: true,
+              productoId: true,
+              cantidad: true,
+              precioUnitario: true,
+              producto: { select: { id: true, nombre: true, foto: true } },
+            },
+            orderBy: { id: 'asc' },
+          },
+        },
+        orderBy: { creadoEn: 'desc' },
+        skip,
+        take,
+      }),
+      this.prisma.pedido.count({ where: { usuarioId: userId } }),
+    ]);
+
+    return {
+      items: items.map((pedido) => ({
+        id: pedido.id,
+        estado: pedido.estado,
+        creadoEn: pedido.creadoEn,
+        total: pedido.totalSnapshot,
+        motivoCancelacion: pedido.motivoCancelacion,
+        canceladoEn: pedido.canceladoEn,
+        canceladoPor: pedido.canceladoPor,
+        puedeCancelar: pedido.estado === PedidoEstado.PENDIENTE,
+        negocio: pedido.negocio,
+        productos: pedido.pedidoProductos.map((item) => ({
+          id: item.productoId,
+          nombre: item.producto?.nombre ?? null,
+          foto: item.producto?.foto ?? null,
+          cantidad: item.cantidad,
+          precio: item.precioUnitario,
+        })),
+      })),
+      total,
+      page: p,
+      limit: l,
+    };
   }
 
   /** Historial de pedidos generados al cerrar listas de Mi Nenulista. */
@@ -448,7 +619,9 @@ export class PedidoService {
             cantidad: nuevaCantidad,
             precioUnitario,
             descuentoAplicado,
-            subtotal: precioUnitario.mul(nuevaCantidad).minus(descuentoAplicado),
+            subtotal: precioUnitario
+              .mul(nuevaCantidad)
+              .minus(descuentoAplicado),
             categoriaIdSnapshot: producto.negocio.categoriaId,
           },
         });
@@ -469,7 +642,7 @@ export class PedidoService {
       await this.syncPedidoTotal(tx, pedidoId);
     });
 
-    return this.getPedido(pedidoId);
+    return this.getPedidoRaw(pedidoId);
   }
 
   async updateItemCantidad(
@@ -512,7 +685,7 @@ export class PedidoService {
       await this.syncPedidoTotal(tx, pedidoId);
     });
 
-    return this.getPedido(pedidoId);
+    return this.getPedidoRaw(pedidoId);
   }
 
   async removeItem(pedidoId: number, productoId: number) {
@@ -539,7 +712,7 @@ export class PedidoService {
       await this.syncPedidoTotal(tx, pedidoId);
     });
 
-    return this.getPedido(pedidoId);
+    return this.getPedidoRaw(pedidoId);
   }
 
   async createCompra(pedidoId: number, userId: number, dto: CreateCompraDto) {
@@ -595,7 +768,9 @@ export class PedidoService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        throw new BadRequestException('Ya existe una compra para este pedido y usuario');
+        throw new BadRequestException(
+          'Ya existe una compra para este pedido y usuario',
+        );
       }
       throw error;
     }
@@ -663,7 +838,9 @@ export class PedidoService {
     const moneda = dto.moneda ?? compra.moneda;
 
     if (moneda !== compra.moneda) {
-      throw new BadRequestException('La moneda del pago debe coincidir con la compra');
+      throw new BadRequestException(
+        'La moneda del pago debe coincidir con la compra',
+      );
     }
 
     const pago = await this.prisma.$transaction(async (tx) => {

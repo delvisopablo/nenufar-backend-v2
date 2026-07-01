@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Controller,
   Post,
   Body,
@@ -11,6 +10,7 @@ import {
   Req,
   UnauthorizedException,
   UploadedFile,
+  UseFilters,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -27,21 +27,16 @@ import { NenulistaService } from './nenulista.service';
 import { AddProductoFavoritoDto } from './dto/add-producto-favorito.dto';
 import { AddListaCompraItemDto } from './dto/add-lista-compra-item.dto';
 import { UpdateListaCompraItemDto } from './dto/update-lista-compra-item.dto';
+import {
+  UploadedImageLike,
+  assertValidImageUpload,
+  imageFileFilter,
+} from '../common/uploads/image-upload.util';
+import { createImageTooLargeFilter } from '../common/uploads/image-too-large.filter';
 
 const MAX_PROFILE_PHOTO_SIZE = 3 * 1024 * 1024;
-const profilePhotoExtensions: Record<string, string> = {
-  'image/jpeg': 'jpg',
-  'image/jpg': 'jpg',
-  'image/png': 'png',
-  'image/webp': 'webp',
-};
-
-type UploadedProfilePhoto = {
-  buffer?: Buffer;
-  mimetype?: string;
-  originalname?: string;
-  size?: number;
-};
+const PROFILE_PHOTO_TOO_LARGE_MESSAGE =
+  'La foto de perfil no puede superar 3 MB.';
 
 type AuthenticatedRequest = Request & {
   user?: {
@@ -77,28 +72,17 @@ export class UsuarioController {
   }
 
   @Post('me/foto-perfil')
+  @UseFilters(
+    createImageTooLargeFilter('fotoPerfil', PROFILE_PHOTO_TOO_LARGE_MESSAGE),
+  )
   @UseInterceptors(
     FileInterceptor('fotoPerfil', {
       limits: { fileSize: MAX_PROFILE_PHOTO_SIZE },
-      fileFilter: (_req, file: UploadedProfilePhoto, callback) => {
-        const mimeType = String(file.mimetype ?? '');
-
-        if (!profilePhotoExtensions[mimeType]) {
-          callback(
-            new BadRequestException(
-              'La foto de perfil debe ser JPG, PNG o WEBP',
-            ),
-            false,
-          );
-          return;
-        }
-
-        callback(null, true);
-      },
+      fileFilter: imageFileFilter('fotoPerfil'),
     }),
   )
   async subirFotoPerfil(
-    @UploadedFile() file: UploadedProfilePhoto | undefined,
+    @UploadedFile() file: UploadedImageLike | undefined,
     @Req() req: AuthenticatedRequest,
   ) {
     const userId = this.getAuthenticatedUserId(req);
@@ -250,30 +234,20 @@ export class UsuarioController {
 
   private async persistProfilePhoto(
     userId: number,
-    file: UploadedProfilePhoto | undefined,
+    file: UploadedImageLike | undefined,
   ) {
-    if (!file?.buffer?.length) {
-      throw new BadRequestException('Selecciona una foto de perfil');
-    }
-
-    if (Number(file.size ?? 0) > MAX_PROFILE_PHOTO_SIZE) {
-      throw new BadRequestException('La foto de perfil no puede superar 3 MB');
-    }
-
-    const mimeType = String(file.mimetype ?? '');
-    const extension = profilePhotoExtensions[mimeType];
-
-    if (!extension) {
-      throw new BadRequestException(
-        'La foto de perfil debe ser JPG, PNG o WEBP',
-      );
-    }
+    const extension = assertValidImageUpload(file, {
+      field: 'fotoPerfil',
+      maxSize: MAX_PROFILE_PHOTO_SIZE,
+      missingMessage: 'Selecciona una foto de perfil.',
+      tooLargeMessage: PROFILE_PHOTO_TOO_LARGE_MESSAGE,
+    });
 
     const uploadDir = join(process.cwd(), 'uploads', 'usuarios', 'perfil');
     await mkdir(uploadDir, { recursive: true });
 
     const filename = `usuario-${userId}-${randomUUID()}.${extension}`;
-    await writeFile(join(uploadDir, filename), file.buffer);
+    await writeFile(join(uploadDir, filename), file!.buffer!);
 
     return `uploads/usuarios/perfil/${filename}`;
   }

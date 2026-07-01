@@ -20,6 +20,7 @@ import { CreatePagoDto } from './dto/create-pago.dto';
 import { QueryNegocioPedidosDto } from './dto/query-negocio-pedidos.dto';
 import { UpdatePagoEstadoDto } from './dto/update-pago-estado.dto';
 import { UpdateEstadoPedidoDto } from './dto/update-estado-pedido.dto';
+import { CancelarPedidoDto } from './dto/cancelar-pedido.dto';
 
 @Controller()
 export class PedidoController {
@@ -55,20 +56,25 @@ export class PedidoController {
     );
   }
 
+  /** Detalle de pedido. Solo lo puede ver el usuario que lo creó o quien gestiona el negocio. */
   @Get('pedidos/:id')
-  getPedido(@Param('id', ParseIntPipe) id: number) {
-    return this.service.getPedido(id);
+  getPedido(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.getPedido(id, this.getAuthenticatedUserId(req));
   }
 
   @Patch('pedidos/:id')
   updatePedido(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdatePedidoDto,
+    @Req() req: { user?: { id?: number } },
   ) {
-    return this.service.updatePedido(id, dto);
+    return this.service.updatePedido(id, this.getAuthenticatedUserId(req), dto);
   }
 
-  /** Cambia el estado del pedido. Solo dueño/miembro del negocio o admin. */
+  /** Cambia el estado del pedido (completar/entregar/cancelar). Solo dueño/miembro del negocio o admin. */
   @Patch('pedidos/:id/estado')
   actualizarEstadoPedido(
     @Param('id', ParseIntPipe) id: number,
@@ -79,6 +85,35 @@ export class PedidoController {
       id,
       this.getAuthenticatedUserId(req),
       dto.estado,
+      dto.motivo,
+    );
+  }
+
+  /** Cancela un pedido: lo puede cancelar el usuario que lo creó (Nenulista) o quien gestiona el negocio. */
+  @Patch('pedidos/:id/cancelar')
+  cancelarPedido(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CancelarPedidoDto,
+    @Req() req: { user?: { id?: number } },
+  ) {
+    return this.service.cancelarPedido(
+      id,
+      this.getAuthenticatedUserId(req),
+      dto.motivo,
+    );
+  }
+
+  /** Pedidos del usuario autenticado (Nenulista / historial). */
+  @Get('me/pedidos')
+  misPedidos(
+    @Req() req: { user?: { id?: number } },
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    return this.service.misPedidos(
+      this.getAuthenticatedUserId(req),
+      page,
+      limit,
     );
   }
 
@@ -123,7 +158,11 @@ export class PedidoController {
     @Body() dto: CreateCompraDto,
     @Req() req: { user?: { id?: number } },
   ) {
-    return this.service.createCompra(pedidoId, this.getAuthenticatedUserId(req), dto);
+    return this.service.createCompra(
+      pedidoId,
+      this.getAuthenticatedUserId(req),
+      dto,
+    );
   }
 
   @Get('compras/:id')
@@ -137,7 +176,11 @@ export class PedidoController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    return this.service.listComprasUsuario(this.getAuthenticatedUserId(req), page, limit);
+    return this.service.listComprasUsuario(
+      this.getAuthenticatedUserId(req),
+      page,
+      limit,
+    );
   }
 
   // ---- Pagos ----
@@ -168,6 +211,10 @@ export class PedidoController {
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    return this.service.listPagosUsuario(this.getAuthenticatedUserId(req), page, limit);
+    return this.service.listPagosUsuario(
+      this.getAuthenticatedUserId(req),
+      page,
+      limit,
+    );
   }
 }

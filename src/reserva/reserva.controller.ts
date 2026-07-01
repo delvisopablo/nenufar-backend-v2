@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 import {
@@ -20,6 +19,7 @@ import { ReservaService } from './reserva.service';
 import { CreateReservaDto } from './dto/create-reserva.dto';
 import { UpdateReservaDto } from './dto/update-reserva.dto';
 import { UpdateReservaEstadoDto } from './dto/update-reserva-estado.dto';
+import { CancelarReservaDto } from './dto/cancelar-reserva.dto';
 import { QueryNegocioReservasDto } from './dto/query-negocio-reservas.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt.guard';
 import { createFieldError } from '../common/errors/app-error';
@@ -208,6 +208,17 @@ export class ReservaController {
     const userId = this.getAuthenticatedUserId(req);
     const isAdmin = !!req.user?.isAdmin;
     return this.service.cancelar(id, userId, isAdmin);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('reservas/:id/cancelar')
+  cancelarPorUsuario(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CancelarReservaDto,
+    @Req() req: any,
+  ) {
+    const userId = this.getAuthenticatedUserId(req);
+    return this.service.cancelarPorUsuario(id, userId, dto.motivo);
   }
 
   @UseGuards(JwtAuthGuard)
